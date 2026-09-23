@@ -273,3 +273,7 @@ def setup(api):
 ```
 
 `meshssi/demo.py` simulates a radio and mesh that runs through the app's real code paths (acks, retries, traces, the packet log), so most features can be worked on without hardware.
+
+## License
+
+meshssi is free software under the [GNU Affero General Public License v3.0](LICENSE) or later. You can use, modify and share it; if you distribute a modified version, or run one as a network service, you must make its source available under the same licence.
