@@ -245,7 +245,8 @@ It degrades gracefully:
 | Setting | Default | |
 |---|---|---|
 | `ui.theme` | `irssi` | or `/theme` |
-| `ui.show_signal` / `ui.show_paths` | on / off | hop, SNR and heard-by tags; repeater path on channel lines |
+| `ui.show_hops` / `ui.show_snr` | on / off | hop-count column before each nick (`2»` = two hops, green `0»` = direct); SNR tag after received messages |
+| `ui.show_signal` / `ui.show_paths` | on / off | heard-by and round-trip tags on your messages; repeater path on channel lines |
 | `chat.dm_retries` / `chat.flood_after` | 3 / 2 | DM delivery attempts, and when to switch to flooding |
 | `chat.highlights`, `chat.ignores` | `[]` | or `/hilight`, `/ignore` |
 | `notify.desktop` / `notify.only_when_unfocused` | on / on | or `/notify` |

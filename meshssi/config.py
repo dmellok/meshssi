@@ -20,7 +20,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "theme": "irssi",
         "timestamp_format": "%H:%M",
         "nicklist": True,
-        "show_signal": True,  # hops / SNR tags after messages
+        "show_hops": True,  # hop-count column before the nick
+        "show_snr": False,  # SNR tag after received messages
+        "show_signal": True,  # heard-by / round-trip tags after your own messages
         "show_paths": False,  # repeater path after channel messages (needs rx log)
         "scrollback": 2000,
     },

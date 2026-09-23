@@ -264,6 +264,13 @@ class MeshssiApp(CommandsMixin, App):
         line = Text(f"{ts} ", style=t["timestamp"])
         if kind == "msg":
             nick = rec.get("nick", "?")
+            if self.cfg.get("ui.show_hops", True):  # a fixed-width hop-count column before the nick
+                h = rec.get("hops")
+                if h is None:
+                    line.append("    ")
+                else:
+                    h = 0 if h == 255 else h  # 255 = sent direct along a stored route
+                    line.append(f"{h:>2}» ", t["meta"] if h else t["good"])
             if rec.get("own"):
                 line.append("<", t["timestamp"]).append(nick, t["own_nick"]).append("> ", t["timestamp"])
             elif rec.get("hl"):
@@ -282,10 +289,7 @@ class MeshssiApp(CommandsMixin, App):
                 line.append(" ✗", t["error"])
             if self.cfg.get("ui.show_signal", True):
                 meta = []
-                if rec.get("hops") is not None:
-                    h = rec["hops"]
-                    meta.append("direct" if h in (0, 255) else f"{h} hop{'s' if h > 1 else ''}")
-                if rec.get("snr") is not None:
+                if self.cfg.get("ui.show_snr", False) and rec.get("snr") is not None:
                     meta.append(f"{rec['snr']:+.1f}dB")
                 if rec.get("heard"):
                     meta.append(f"heard ×{rec['heard']}")
