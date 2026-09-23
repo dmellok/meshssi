@@ -360,11 +360,40 @@ class MeshssiApp(CommandsMixin, App):
         target = self.win if self.win.kind not in ("view", "rf") else self.windows[0]
         self.add(target, {"k": "raw", "text": markup}, persist=False)
 
+    def wrapped(self, rec: dict, width: int) -> Text:
+        """Render a record, wrapping long lines with a hanging indent so text never runs under the
+        timestamp/nick column (irssi-style)."""
+        line = self.render_rec(rec)
+        plain = line.plain
+        kind = rec.get("k")
+        indent = 0
+        if kind == "msg":
+            indent = plain.find("> ") + 2
+        elif kind == "reply":
+            indent = plain.find("- ", plain.find("-") + 1) + 2
+        elif kind == "notice":
+            indent = max(plain.find("-!- "), plain.find("--- ")) + 4
+        head_cells = cell_len(plain[:indent]) if indent > 1 else 0
+        if not head_cells or head_cells > width // 2 or cell_len(plain) <= width:
+            return line
+        head, body = line[:indent], line[indent:]
+        out = Text(end="")
+        for i, part in enumerate(body.wrap(self.console, width - head_cells)):
+            if i:
+                out.append("\n" + " " * head_cells)
+            else:
+                out.append(head)
+            out.append(part)
+        return out
+
     def _write(self, rec: dict, sel: str = "#log") -> None:
         log = self.query_one(sel, RichLog)
         # RichLog measures Text against the console width, not the pane, so give it the pane width
         width = log.scrollable_content_region.width
-        log.write(self.render_rec(rec), width=width if width > 10 else None)
+        if width > 10:
+            log.write(self.wrapped(rec, width), width=width)
+        else:
+            log.write(self.render_rec(rec))
 
     def redraw(self) -> None:
         w = self.win

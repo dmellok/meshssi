@@ -143,3 +143,25 @@ def test_completion_and_lookup_ignore_emoji():
             await app.action_quit()
 
     asyncio.run(run())
+
+
+def test_long_lines_wrap_with_hanging_indent():
+    async def run():
+        app = DemoApp(live=False)
+        async with app.run_test(size=(140, 40)) as pilot:
+            await boot(pilot, app)
+            rec = {"k": "msg", "nick": "Bin Chicken 🦩", "text": "word " * 40, "t": 0, "hops": 1, "snr": 2.0}
+            lines = app.wrapped(rec, 60).plain.split("\n")
+            from rich.cells import cell_len
+
+            indent = cell_len(lines[0][: lines[0].index("> ") + 2])  # the emoji is two cells wide
+            assert len(lines) > 2
+            for cont in lines[1:]:
+                assert cont[:indent] == " " * indent and cont[indent] != " "  # text starts exactly under the message
+                assert cell_len(cont) <= 60
+            note = {"k": "notice", "text": "x " * 60, "lvl": "info", "t": 0}
+            nlines = app.wrapped(note, 50).plain.split("\n")
+            assert all(ln.startswith(" " * 10) for ln in nlines[1:])
+            await app.action_quit()
+
+    asyncio.run(run())
