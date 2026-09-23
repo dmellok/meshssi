@@ -2,6 +2,7 @@
 
 import math
 
+from rich.cells import cell_len
 from rich.text import Text
 
 EARTH_KM = 6371.0
@@ -74,9 +75,15 @@ def render_map(me: tuple[float, float, str] | None, nodes: list[dict], width: in
         return 0 <= row < len(grid) and col >= 0 and col + n <= width and all(grid[row][c] == " " for c in range(col, col + n))
 
     def put(row, col, s, st):
-        for i, ch in enumerate(s):
-            grid[row][col + i] = ch
-            style[row][col + i] = st
+        c = col
+        for ch in s:  # wide characters (emoji) take two cells: the second is an empty placeholder
+            grid[row][c] = ch
+            style[row][c] = st
+            if cell_len(ch) == 2:
+                grid[row][c + 1] = ""
+                style[row][c + 1] = st
+                c += 1
+            c += 1
 
     placed = []
     for p in sorted(pts, key=lambda p: not p.get("me")):
@@ -90,9 +97,9 @@ def render_map(me: tuple[float, float, str] | None, nodes: list[dict], width: in
             style[row][col] = st
         placed.append((row, col, p, st))
     for row, col, p, st in placed:  # labels after markers so markers win; a label goes right, else left, else nowhere
-        label = " " + p["name"][:18] + " "
-        for start in (col + 1, col - len(label)):
-            if fits(row, start, len(label)):
+        label = " " + p["name"][:24] + " "
+        for start in (col + 1, col - cell_len(label)):
+            if fits(row, start, cell_len(label)):
                 put(row, start, label, st if not p.get("me") else "bold")
                 break
     for r in range(len(grid)):

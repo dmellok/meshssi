@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from meshcore import EventType, MeshCore
+from rich.cells import cell_len
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -365,10 +366,20 @@ class MeshssiApp(CommandsMixin, App):
         show = self.split_win is not None and self.split_win is not self.win and self.split_win in self.windows
         log2.display = show
         if show:
-            log2.clear()
-            for rec in self.split_win.recs[-300:]:
-                self._write(rec, "#log2")
-            log2.scroll_end(animate=False)
+            self.call_after_refresh(self._fill_split)  # once the pane has its real width
+
+    def _fill_split(self) -> None:
+        if not self.split_win:
+            return
+        log2 = self.query_one("#log2", RichLog)
+        log2.clear()
+        width = max(10, log2.scrollable_content_region.width)
+        label = f" {self.split_win.name} · window {self.windows.index(self.split_win) + 1} "
+        side = "─" * max(2, (width - cell_len(label)) // 2)
+        log2.write(Text(f"{side}{label}{side}", self.st["notice"]), width=width)
+        for rec in self.split_win.recs[-300:]:
+            self._write(rec, "#log2")
+        log2.scroll_end(animate=False)
 
     def on_resize(self) -> None:
         self.call_after_refresh(self.redraw)
@@ -617,8 +628,7 @@ class MeshssiApp(CommandsMixin, App):
                 pool.setdefault(k, n["name"])
         return next(iter(pool.values())) if len(pool) == 1 else None
 
-    @staticmethod
-    def path_str(c: dict) -> str:
+    def path_str(self, c: dict) -> str:
         n = c.get("out_path_len", -1)
         if n < 0 or n == 255:
             return "flood"
@@ -626,7 +636,8 @@ class MeshssiApp(CommandsMixin, App):
             return "direct (0 hops)"
         width = (c.get("out_path_hash_mode", 0) + 1) * 2
         p = c.get("out_path", "")
-        return f"{n} hop{'s' if n > 1 else ''} via " + ",".join(p[i : i + width] for i in range(0, len(p), width))
+        hops = [p[i : i + width] for i in range(0, len(p), width)]
+        return f"{n} hop{'s' if n > 1 else ''} via " + ",".join(self.resolve_hash(h) or h for h in hops)
 
     def find_contact(self, query: str) -> dict | None:
         if not self.mc:
