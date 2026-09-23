@@ -1,0 +1,19 @@
+[project]
+name = "meshssi"
+version = "0.1.0"
+description = "An irssi-style terminal client for MeshCore companion radios"
+requires-python = ">=3.10"
+dependencies = [
+    "meshcore>=2.3",
+    "textual>=0.80",
+]
+
+[project.scripts]
+meshssi = "meshssi.__main__:main"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["meshssi"]
