@@ -54,6 +54,15 @@ def render_map(me: tuple[float, float, str] | None, nodes: list[dict], width: in
     if me and has_fix(me[0], me[1]):
         pts = [{"name": me[2], "type": 0, "lat": me[0], "lon": me[1], "me": True}] + pts
     out = Text()
+    off_map = 0
+    if len(pts) > 4:  # keep the local mesh readable: far-off outliers (the odd 500 km skip) go in the table only
+        c_lat = pts[0]["lat"] if pts[0].get("me") else sorted(p["lat"] for p in pts)[len(pts) // 2]
+        c_lon = pts[0]["lon"] if pts[0].get("me") else sorted(p["lon"] for p in pts)[len(pts) // 2]
+        dists = sorted(distance_km(c_lat, c_lon, p["lat"], p["lon"]) for p in pts)
+        limit = max(5.0, 3 * dists[int(len(dists) * 0.8)])
+        kept = [p for p in pts if p.get("me") or distance_km(c_lat, c_lon, p["lat"], p["lon"]) <= limit]
+        off_map = len(pts) - len(kept)
+        pts = kept
     if len(pts) < 1 or width < 20 or height < 6:
         out.append("No nodes with a location yet. Adverts that carry GPS positions will appear here.", styles["dim"])
         return out
@@ -112,6 +121,6 @@ def render_map(me: tuple[float, float, str] | None, nodes: list[dict], width: in
             c = end
         out.append("\n")
     widest = max(distance_km(ys[0], xs[0] / kx, y, x / kx) for x, y in zip(xs, ys)) if pts else 0
-    out.append(f"◉ you  R repeater  @ chat  # room  S sensor   ·   {len(pts)} located   ·   farthest {fmt_distance(widest)}",
-               styles["dim"])
+    out.append(f"◉ you  R repeater  @ chat  # room  S sensor   ·   {len(pts)} on map   ·   farthest {fmt_distance(widest)}"
+               + (f"   ·   {off_map} off map" if off_map else ""), styles["dim"])
     return out

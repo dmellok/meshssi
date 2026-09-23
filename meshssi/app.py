@@ -96,7 +96,7 @@ class MeshssiApp(CommandsMixin, App):
     #log, #log2 { border: none; padding: 0 1; scrollbar-size-vertical: 1; }
     #log2 { height: 40%; }
     #view { padding: 0 1; height: 1fr; }
-    #nicklist { width: 32; padding: 0 1; }
+    #nicklist { width: 32; padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
     #statusbar { height: 1; padding: 0 1; }
     #promptrow { height: 1; }
     #prompt { width: auto; padding: 0 0 0 1; }

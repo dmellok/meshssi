@@ -1,5 +1,6 @@
 """Turn RX_LOG_DATA events (every packet the radio hears) into monitor lines."""
 
+import re
 import time
 
 from rich.text import Text
@@ -57,6 +58,7 @@ def render(s: dict, styles: dict, name_color, distance: str = "") -> Text:
     elif ptype == "GRP_TXT":
         if s.get("message"):
             nick, sep, text = s["message"].partition(": ")
+            text = re.sub(r"@\[([^\]]+)\]", r"@\1", text)  # MeshCore mention syntax, as chat windows show it
             line.append(s.get("chan_name", "?") + " ", "bold")
             if sep:
                 line.append("<").append(nick, name_color(nick)).append("> ").append(text)

@@ -110,3 +110,11 @@ def test_names_match_without_emoji_or_by_emoji_name():
         assert name_matches("Turtle Hops 🐢", typed), typed
     assert name_matches("ada 🦊", "fox") and name_matches("ada 🦊", "fox face")
     assert not name_matches("Nora 🌿", "fox")
+
+
+def test_map_leaves_far_outliers_off_the_plot():
+    me = (-37.81, 144.96, "me")
+    near = [{"name": f"n{i}", "type": 1, "lat": -37.8 + i * 0.01, "lon": 144.95 + i * 0.01} for i in range(6)]
+    far = {"name": "Goulburn", "type": 1, "lat": -34.75, "lon": 149.72}
+    out = geo.render_map(me, near + [far], 80, 20, lambda n: "cyan", THEMES["irssi"]).plain
+    assert "Goulburn" not in out and "1 off map" in out and "n3" in out
