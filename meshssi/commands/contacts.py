@@ -7,7 +7,7 @@ from pathlib import Path
 from rich.markup import escape
 
 from .. import geo
-from ..util import ago
+from ..util import ago, name_forms
 from . import command
 
 TYPES = {0: "?", 1: "chat", 2: "repeater", 3: "room", 4: "sensor"}
@@ -29,7 +29,7 @@ async def c_contacts(app, args):
 
 @command("whois", "contacts", "/whois <contact>", "Show everything known about a node", aliases=("wi",))
 async def c_whois(app, args):
-    heard = next((h | {"key": k} for k, h in app.heard.items() if h.get("name", "").lower() == args.lower()), None)
+    heard = next((h | {"key": k} for k, h in app.heard.items() if args.lower() in name_forms(h.get("name", ""))), None)
     c = app.find_contact(args) if args else None
     if not c and heard:
         where = geo.describe(app.my_pos, heard.get("lat"), heard.get("lon"))

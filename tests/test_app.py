@@ -116,3 +116,30 @@ def test_example_plugins_load_and_pingbot_answers(monkeypatch):
             await app.action_quit()
 
     asyncio.run(run())
+
+
+def test_completion_and_lookup_ignore_emoji():
+    async def run():
+        app = DemoApp(live=False)
+        async with app.run_test(size=(140, 40)) as pilot:
+            await boot(pilot, app)
+            app.switch(0)
+
+            def complete(line):
+                start, cands, _ = app.completions(line)
+                return [line[:start] + c for c in cands]
+
+            assert complete("/msg nora") == ["/msg Nora 🌿 "]
+            assert complete("/msg herb") == ["/msg Nora 🌿 "]  # 🌿 is :herb:
+            assert complete("/whois fox") == ["/whois ada 🦊 "]  # 🦊 is :fox_face:
+            assert "/trace Harbour Hill Rpt " in complete("/trace hill")  # any word in the name
+            c, rest = app.split_target("nora hello there")
+            assert c["adv_name"] == "Nora 🌿" and rest == "hello there"
+            c, rest = app.split_target("ada fox_face hi")
+            assert c["adv_name"] == "ada 🦊" and rest == "hi"
+            assert app.find_contact("herb")["adv_name"] == "Nora 🌿"
+            app.switch(app.windows.index(app.find_window("chan:Public")))
+            assert complete("nor") == ["@[Nora 🌿] "]
+            await app.action_quit()
+
+    asyncio.run(run())

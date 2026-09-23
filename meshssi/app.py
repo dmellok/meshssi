@@ -22,7 +22,7 @@ from .notify import desktop_notify
 from .plugins import PluginManager
 from .store import Store
 from .themes import THEMES
-from .util import ago, expand_shortcodes, linkify, pick_color, split_utf8
+from .util import ago, expand_shortcodes, linkify, name_forms, name_matches, pick_color, split_utf8
 
 CONTACT_TYPES = {0: "?", 1: "chat", 2: "repeater", 3: "room", 4: "sensor"}
 TYPE_GLYPH = {1: "@", 2: "R", 3: "#", 4: "S"}
@@ -635,11 +635,13 @@ class MeshssiApp(CommandsMixin, App):
         if not q:
             return None
         cs = list(self.mc.contacts.values())
-        for test in (
-            lambda c: c["adv_name"].lower() == q,
+        q = " ".join(q.strip(":").split())
+        for test in (  # most to least specific; emoji in names can be skipped or typed by name (🐢 = turtle)
+            lambda c: c["adv_name"].lower() == q or q in name_forms(c["adv_name"]),
             lambda c: c["public_key"].startswith(q) and len(q) >= 4,
-            lambda c: c["adv_name"].lower().startswith(q),
-            lambda c: q in c["adv_name"].lower(),
+            lambda c: any(f.startswith(q) for f in name_forms(c["adv_name"])),
+            lambda c: name_matches(c["adv_name"], q),
+            lambda c: any(q in f for f in name_forms(c["adv_name"])),
         ):
             hits = [c for c in cs if test(c)]
             if len(hits) == 1:
@@ -653,10 +655,14 @@ class MeshssiApp(CommandsMixin, App):
         if not self.mc:
             return None, args
         low = args.lower()
-        for c in sorted(self.mc.contacts.values(), key=lambda c: -len(c["adv_name"])):
-            n = c["adv_name"].lower()
-            if low.startswith(n) and (len(low) == len(n) or low[len(n)] == " "):
-                return c, args[len(n) :].strip()
+        best = None  # longest spelling of a name (with or without its emoji) that the arguments start with
+        for c in self.mc.contacts.values():
+            for form in name_forms(c["adv_name"]):
+                if low.startswith(form) and (len(low) == len(form) or low[len(form)] == " "):
+                    if best is None or len(form) > best[1]:
+                        best = (c, len(form))
+        if best:
+            return best[0], args[best[1] :].strip()
         if args.startswith('"') and '"' in args[1:]:
             end = args.index('"', 1)
             return self.find_contact(args[1:end]), args[end + 1 :].strip()
@@ -685,7 +691,8 @@ class MeshssiApp(CommandsMixin, App):
             frag = before[start:].lower()
             if not frag and start != len(before):
                 continue
-            hits = sorted(n for n in names if n.lower().startswith(frag))
+            hits = sorted((n for n in names if name_matches(n, frag)),
+                          key=lambda n: (not n.lower().startswith(frag), n.lower()))  # plain prefix matches first
             if hits:
                 if self.win.kind == "channel" and at_start and start == 0:
                     return start, [f"@[{h}] " for h in hits], 0

@@ -77,3 +77,68 @@ def expand_shortcodes(text: str) -> str:
     from rich._emoji_codes import EMOJI
 
     return _SHORTCODE_RE.sub(lambda m: EMOJI.get(m.group(1), EMOJI.get(m.group(1).replace("-", "_"), m.group(0))), text)
+
+
+_EMOJI_NAMES: dict[str, str] | None = None
+
+
+def _emoji_names() -> dict[str, str]:
+    """emoji character(s) -> a readable name, e.g. 🐢 -> turtle (built lazily from Rich's table)."""
+    global _EMOJI_NAMES
+    if _EMOJI_NAMES is None:
+        from rich._emoji_codes import EMOJI
+
+        names: dict[str, str] = {}
+        for name, char in EMOJI.items():
+            char = char.replace("️", "")
+            best = names.get(char)
+            # prefer real words over things like "+1", then the shortest
+            if best is None or (name[0].isalpha(), -len(name)) > (best[0].isalpha(), -len(best)):
+                names[char] = name
+        _EMOJI_NAMES = names
+    return _EMOJI_NAMES
+
+
+def _split_emoji(text: str) -> list[tuple[str, str | None]]:
+    """Tokenise into (chunk, emoji_name or None), matching the longest emoji sequence at each point."""
+    table = _emoji_names()
+    text = text.replace("️", "")
+    out, i = [], 0
+    while i < len(text):
+        for size in range(min(8, len(text) - i), 0, -1):
+            chunk = text[i : i + size]
+            if not chunk.isascii() and chunk in table:
+                out.append((chunk, table[chunk]))
+                i += size
+                break
+        else:
+            out.append((text[i], None))
+            i += 1
+    return out
+
+
+def name_forms(name: str) -> set[str]:
+    """Lowercase spellings a person might type for a node name.
+
+    "Turtle Hops 🐢" -> {"turtle hops 🐢", "turtle hops", "turtle hops turtle"}; an emoji-only
+    name like "🦊" -> {"🦊", "fox_face", "fox face"}.
+    """
+    parts = _split_emoji(name)
+    stripped = " ".join("".join(c for c, e in parts if e is None).split())
+    named = " ".join("".join(f" {e} " if e else c for c, e in parts).split())
+    forms = {name.lower(), stripped.lower(), named.lower(), named.replace("_", " ").lower()}
+    return {f for f in forms if f}
+
+
+def name_matches(name: str, typed: str) -> bool:
+    """Does `typed` (a fragment, maybe :shortcode-ish) start the name or any word in it, ignoring emoji?"""
+    frag = " ".join(typed.lower().strip(":").split())
+    if not frag:
+        return True
+    for form in name_forms(name):
+        if form.startswith(frag):
+            return True
+        words = form.split(" ")
+        if any(" ".join(words[i:]).startswith(frag) for i in range(1, len(words))):
+            return True
+    return False

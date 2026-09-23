@@ -29,7 +29,7 @@ Requires Python 3.11+. `meshssi.sh` runs straight from the checkout; `.venv/bin/
 
 ## What it does
 
-**Chat like irssi.** Window 1 is status, then one window per channel slot on the radio, then DM windows. Tab completes commands, settings and node names, even names with spaces and emoji. At the start of a channel line, Tab inserts an `@[mention]`. Also included: input history, `/lastlog` search, `/ignore`, `/hilight`, `/away` with a single auto-reply per person, `/alias`, `/split` to watch two windows at once, and an unread marker line. URLs are clickable, and `:shortcodes:` become emoji. Scrollback is saved, and open DMs are restored on restart.
+**Chat like irssi.** Window 1 is status, then one window per channel slot on the radio, then DM windows. Tab completes commands, settings and node names. Names can include spaces and emoji: skip the emoji, or type its name (`turtle hops` or `turtle` both find "Turtle Hops 🐢"), and any word of the name works (`hops`). At the start of a channel line, Tab inserts an `@[mention]`. Also included: input history, `/lastlog` search, `/ignore`, `/hilight`, `/away` with a single auto-reply per person, `/alias`, `/split` to watch two windows at once, and an unread marker line. URLs are clickable, and `:shortcodes:` become emoji. Scrollback is saved, and open DMs are restored on restart.
 
 **Reliable DMs.** Each DM shows `…` while pending, `✓` when acked (with round-trip time) and `✗` if it failed. Missing acks trigger automatic retries, falling back to flood routing after `chat.flood_after` tries. If an ack arrives after meshssi gave up, the ✗ turns into ✓. Long messages are split to fit the packet size.
 
@@ -90,7 +90,7 @@ Themes live in [`meshssi/themes.py`](meshssi/themes.py). A new one is usually a 
 
 ## Commands
 
-`/help` lists these in the app, and `/help <command>` or `/help <category>` narrows it down. Commands that need a node take its name; Tab completes it, and a unique prefix or key prefix works too.
+`/help` lists these in the app, and `/help <command>` or `/help <category>` narrows it down. Commands that need a node take its name; Tab completes it, and a unique prefix, a word from the name, or a key prefix works too. Emoji in names can be left out or typed by name (🐢 is `turtle`).
 
 **Chat**
 

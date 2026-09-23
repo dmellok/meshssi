@@ -99,3 +99,14 @@ def test_every_theme_is_complete_and_valid():
         styles = [v for k, v in t.items() if isinstance(v, str)] + t["act"] + t["nicks"] + t["graph"] + list(t["ptype"].values())
         for s in styles:
             Style.parse(s)  # rich text styles
+
+
+def test_names_match_without_emoji_or_by_emoji_name():
+    from meshssi.util import name_forms, name_matches
+
+    assert "turtle hops" in name_forms("Turtle Hops 🐢")
+    assert "fox face" in name_forms("🦊")
+    for typed in ("tur", "turtle hops", "hops", "turtle", ":turtle", "turtle hops turtle"):
+        assert name_matches("Turtle Hops 🐢", typed), typed
+    assert name_matches("ada 🦊", "fox") and name_matches("ada 🦊", "fox face")
+    assert not name_matches("Nora 🌿", "fox")
