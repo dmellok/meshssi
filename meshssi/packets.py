@@ -5,11 +5,6 @@ import time
 from rich.text import Text
 
 CONTACT_TYPES = {0: "?", 1: "chat", 2: "repeater", 3: "room", 4: "sensor"}
-PAYLOAD_STYLE = {
-    "ADVERT": "bold green", "GRP_TXT": "cyan", "TXT_MSG": "magenta", "ACK": "grey62", "PATH": "yellow",
-    "REQ": "blue", "RESPONSE": "blue", "ANON_REQ": "blue", "TRACE": "bold yellow", "GRP_DATA": "cyan",
-    "CONTROL": "orange1", "MULTIPART": "grey62", "RAW_CUSTOM": "grey62",
-}
 
 
 def split_path(path: str, hash_size: int) -> list[str]:
@@ -45,12 +40,12 @@ def render(s: dict, styles: dict, name_color, distance: str = "") -> Text:
     rssi = s.get("rssi")
     snr = s.get("snr")
     line.append(f"{rssi:>4}dBm " if rssi is not None else "   ?dBm ", styles["meta"])
-    snr_style = "green" if (snr or 0) >= 5 else ("yellow" if (snr or 0) >= -5 else "red")
+    snr_style = styles["good"] if (snr or 0) >= 5 else (styles["warn"] if (snr or 0) >= -5 else styles["bad"])
     line.append(f"{snr:>+6.2f}dB " if snr is not None else "     ?dB ", snr_style)
     route = s["route"].replace("TC_", "")
     line.append(f"{route[:6]:<6} ", styles["dim"])
     ptype = s["ptype"]
-    line.append(f"{ptype:<8} ", PAYLOAD_STYLE.get(ptype, ""))
+    line.append(f"{ptype:<8} ", styles["ptype"].get(ptype, ""))
     n = len(s["hops"])
     line.append(f"{n} hop{' ' if n == 1 else 's'} ", styles["meta"])
     if ptype == "ADVERT" and s.get("adv_name"):

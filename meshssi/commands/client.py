@@ -126,15 +126,32 @@ def apply_setting(app, key: str) -> None:
     app.refresh_chrome()
 
 
-@command("theme", "client", "/theme [name]", f"Switch colour theme ({', '.join(THEMES)})")
+def theme_swatch(name: str, current: bool) -> str:
+    t = THEMES[name]
+    bg = t["background"]
+    nicks = "".join(f"[{c} on {bg}]■[/]" for c in t["nicks"][:8])
+    bar = f"[{t['bar_fg']} on {t['bar_bg']}] [{t['bracket']} on {t['bar_bg']}][[/]12:34[{t['bracket']} on {t['bar_bg']}]][/] [/]"
+    return (f"[{'bold ' if current else ''}{t['foreground']} on {bg}] {'▸' if current else ' '} {name:<17}[/]"
+            f"[{t['timestamp']} on {bg}]12:34 [/][{t['own_nick']} on {bg}]<you>[/][{t['foreground']} on {bg}] hi [/]"
+            f"[{t['hilight']}]@you[/][{bg} on {bg}] [/]{bar}[{bg} on {bg}] [/]{nicks}[{bg} on {bg}] [/]")
+
+
+@command("theme", "client", "/theme [name|next|prev]", "Switch colour theme; no argument shows them all")
 async def c_theme(app, args):
+    names = list(THEMES)
+    if args in ("next", "prev"):
+        args = names[(names.index(app.theme_name) + (1 if args == "next" else -1)) % len(names)]
     if args not in THEMES:
-        app.echo(f"Themes: {', '.join(THEMES)} (current: {app.theme_name})", "error" if args else "info")
+        if args:
+            app.echo(f"No theme called {args!r}.", "error")
+        app.echo(f"{len(THEMES)} themes — /theme <name>, or /theme next and /theme prev to flip through them:")
+        for name in names:
+            app.echo_raw(theme_swatch(name, name == app.theme_name))
         return
     app.cfg["ui"]["theme"] = args
     app.cfg.save()
     apply_setting(app, "ui.theme")
-    app.echo(f"Theme set to {args}.", "ok")
+    app.echo(f"Theme set to {args} ({names.index(args) + 1}/{len(names)}).", "ok")
 
 
 @command("alias", "client", "/alias [name [/command args...]]", "Define a shortcut ($* = the arguments); no args lists them")

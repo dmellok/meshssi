@@ -57,7 +57,7 @@ Channel messages you send show **heard ×N** as repeaters relay them back to you
 
 **Share one radio between apps.** See [daemon mode](#daemon-mode-share-the-radio).
 
-**Themes and settings.** Themes: `irssi`, `midnight`, `gruvbox`, `mono`, `light`. Everything is configurable in `~/.config/meshssi/config.toml` or with `/set`. Desktop notifications for DMs and mentions (macOS and Linux) appear when the terminal isn't focused.
+**Themes and settings.** There are 26 [themes](#themes), and everything is configurable in `~/.config/meshssi/config.toml` or with `/set`. Desktop notifications for DMs and mentions (macOS and Linux) appear when the terminal isn't focused.
 
 **Plugins.** Drop Python files into `~/.config/meshssi/plugins/` to add bots, bridges and commands (see [Plugins](#plugins)).
 
@@ -74,6 +74,19 @@ Channel messages you send show **heard ×N** as repeaters relay them back to you
 | F2 | toggle the nicklist |
 
 In the status bar, `Act:` lists windows with unread activity: grey for events, white for messages, magenta for DMs and mentions. A line starting with `//` sends a message that begins with `/`.
+
+## Themes
+
+![All 26 themes](docs/themes.png)
+
+`/theme` lists every theme with a live swatch. `/theme <name>` switches, and `/theme next` / `/theme prev` flip through them. The choice is saved to `ui.theme`.
+
+- **Classic:** `irssi` (the default), `bitchx`, `mirc`, `mono`, `high-contrast`
+- **Dark:** `midnight`, `dracula`, `nord`, `solarized-dark`, `catppuccin`, `tokyonight`, `one-dark`, `monokai`, `gruvbox`, `everforest`, `rose-pine`, `kanagawa`, `github-dark`, `synthwave`
+- **Light:** `light`, `solarized-light`, `catppuccin-latte`, `gruvbox-light`, `github-light`
+- **CRT:** `matrix`, `amber`
+
+Themes live in [`meshssi/themes.py`](meshssi/themes.py). A new one is usually a single `palette(...)` call with a background, a foreground, the bar colours and seven accents; the rest (graphs, packet types, signal quality) is derived. `scripts/theme_gallery.py` re-renders the image above.
 
 ## Commands
 
@@ -182,7 +195,7 @@ In the status bar, `Act:` lists windows with unread activity: grey for events, w
 | `/reconnect [target]` | Reconnect, optionally to another radio (host[:port], /dev/..., ble:ADDR) (also `/connect`, `/server`) |
 | `/set [section.key [value]] \| /set <device-setting> <value>` | Show or change settings (config.toml); device settings: manualadd, multiacks, locpolicy, pathhash, autoadd |
 | `/split [n\|off]` | Show another window's scrollback above this one |
-| `/theme [name]` | Switch colour theme (irssi, midnight, gruvbox, mono, light) |
+| `/theme [name\|next\|prev]` | Switch colour theme; no argument shows them all |
 | `/unalias <name>` | Remove an alias |
 | `/wc` | Close the current window (use /part to leave a channel) (also `/close`) |
 | `/window <n>\|close\|list\|move <n>` | Switch, close, list or reorder windows (also `/win`, `/w`) |

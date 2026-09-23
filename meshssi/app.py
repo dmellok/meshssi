@@ -197,6 +197,12 @@ class MeshssiApp(CommandsMixin, App):
         for sel in ("#log", "#log2", "#view", "#input", "#promptrow", "#prompt"):
             w = self.query_one(sel)
             w.styles.background, w.styles.color = t["background"], t["foreground"]
+            w.styles.scrollbar_background = t["background"]
+            w.styles.scrollbar_background_hover = t["background"]
+            w.styles.scrollbar_background_active = t["background"]
+            w.styles.scrollbar_color = t["sidebar_border"]
+            w.styles.scrollbar_color_hover = t["dim"]
+            w.styles.scrollbar_color_active = t["dim"]
         self.query_one("#log2").styles.border_bottom = ("solid", t["sidebar_border"])
         nl = self.query_one("#nicklist")
         nl.styles.background = t["sidebar_bg"]
@@ -422,9 +428,9 @@ class MeshssiApp(CommandsMixin, App):
         er = ("] ", t["bracket"])
         bar.append(*br).append(time.strftime("%H:%M")).append(*er)
         bar.append(*br).append(self.my_name, "bold")
-        bar.append(f"({'+' if self.connected else 'offline'})", "green" if self.connected else "bold red")
+        bar.append(f"({'+' if self.connected else 'offline'})", t["status_ok"] if self.connected else t["status_bad"])
         if self.away is not None:
-            bar.append(" (away)", "yellow")
+            bar.append(" (away)", t["unread"])
         bar.append(*er)
         bar.append(*br).append(f"{self.current + 1}:").append(self.win.name, "bold").append(*er)
         act = [(i, w.activity) for i, w in enumerate(self.windows) if w.activity and i != self.current]

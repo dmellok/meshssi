@@ -80,16 +80,16 @@ def render_graphs(app, width: int, height: int) -> Text:
     out = Text()
     span = f"{fmt_duration(s[-1]['t'] - s[0]['t'])}" if len(s) > 1 else "just started"
     out.append(f"Radio health · {len(s)} samples every 30s · span {span}\n\n", st["dim"])
-    _graph_row(out, "noise floor", _series(s, "noise_floor"), width, "dBm", "cyan", st)
-    _graph_row(out, "last RSSI", _series(s, "last_rssi"), width, "dBm", "green", st)
-    _graph_row(out, "last SNR", _series(s, "last_snr"), width, "dB", "yellow", st)
-    _graph_row(out, "packets rx /min", _rate(s, "recv"), width, "", "magenta", st)
-    _graph_row(out, "packets tx /min", _rate(s, "sent"), width, "", "bright_blue", st)
-    _graph_row(out, "tx airtime s/min", _rate(s, "tx_air_secs"), width, "s", "orange1", st)
-    _graph_row(out, "rx airtime s/min", _rate(s, "rx_air_secs"), width, "s", "orchid", st)
+    _graph_row(out, "noise floor", _series(s, "noise_floor"), width, "dBm", st["graph"][0], st)
+    _graph_row(out, "last RSSI", _series(s, "last_rssi"), width, "dBm", st["graph"][1], st)
+    _graph_row(out, "last SNR", _series(s, "last_snr"), width, "dB", st["graph"][2], st)
+    _graph_row(out, "packets rx /min", _rate(s, "recv"), width, "", st["graph"][3], st)
+    _graph_row(out, "packets tx /min", _rate(s, "sent"), width, "", st["graph"][4], st)
+    _graph_row(out, "tx airtime s/min", _rate(s, "tx_air_secs"), width, "s", st["graph"][5], st)
+    _graph_row(out, "rx airtime s/min", _rate(s, "rx_air_secs"), width, "s", st["graph"][6], st)
     bat = [v / 1000 for v in _series(s, "battery_mv") if v]
     if bat:
-        _graph_row(out, "battery", bat, width, "V", "green", st)
+        _graph_row(out, "battery", bat, width, "V", st["graph"][7], st)
     out.append("\nSNR per node (from messages and adverts)\n", "bold underline")
     rows = sorted(app.snr_hist.items(), key=lambda kv: -kv[1][-1][0])[: max(1, height - 16)]
     if not rows:
@@ -122,12 +122,12 @@ def render_dash(app, width: int, height: int) -> Text:
         up = stt.get("uptime", 0)
         air = 100 * stt.get("airtime", 0) / up if up else 0
         bat = f"{stt['bat'] / 1000:.2f}V" if stt.get("bat") else "?"
-        out.append(f"{bat:>7} ", "red" if stt.get("bat") and stt["bat"] < 3500 else "")
+        out.append(f"{bat:>7} ", st["bad"] if stt.get("bat") and stt["bat"] < 3500 else "")
         d, rem = divmod(int(up), 86400)
         uptime = f"{d}d {rem // 3600:02d}h" if d else f"{rem // 3600}h {rem % 3600 // 60:02d}m"
         out.append(f"{uptime:>10} {stt.get('noise_floor', '?'):>6} {stt.get('last_rssi', '?'):>5} "
                    f"{stt.get('last_snr', 0):>+6.1f} {stt.get('nb_recv', '?'):>8} {stt.get('nb_sent', '?'):>7} ")
-        out.append(f"{air:>5.2f}%  ", "red" if air > 10 else "")
+        out.append(f"{air:>5.2f}%  ", st["bad"] if air > 10 else "")
         out.append(f"{ago(t)}\n", st["dim"])
     out.append(f"\nPolled every {app.cfg.get('dashboard.interval', 10)} min · /watch <node> · /unwatch <node> · "
                "/dash refresh polls now", st["dim"])

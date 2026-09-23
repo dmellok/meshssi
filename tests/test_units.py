@@ -82,3 +82,20 @@ def test_packet_summary_and_render():
     assert s["hops"] == ["a1", "b2"] and s["hop_names"] == ["Alpha", None]
     line = packets.render(s, THEMES["irssi"], lambda n: "cyan").plain
     assert "ADVERT" in line and "Hill Rpt" in line and "via Alpha,b2" in line and "2 hops" in line
+
+
+def test_every_theme_is_complete_and_valid():
+    from rich.style import Style
+    from textual.color import Color
+
+    from meshssi.themes import ROLES
+
+    assert len(THEMES) >= 25
+    for name, t in THEMES.items():
+        for role in ROLES + ("good", "warn", "bad", "status_ok", "status_bad", "graph", "ptype"):
+            assert role in t, (name, role)
+        for key in ("background", "foreground", "bar_bg", "bar_fg", "sidebar_bg", "sidebar_border", "dim"):
+            Color.parse(t[key])  # textual widget colours
+        styles = [v for k, v in t.items() if isinstance(v, str)] + t["act"] + t["nicks"] + t["graph"] + list(t["ptype"].values())
+        for s in styles:
+            Style.parse(s)  # rich text styles
