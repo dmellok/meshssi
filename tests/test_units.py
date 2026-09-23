@@ -65,13 +65,16 @@ def test_store_replays_acks(tmp_path):
 
 
 def test_geo():
+    from meshssi.basemap import View
+
     syd, mel = (-33.8688, 151.2093), (-37.8136, 144.9631)
     assert 700 < geo.distance_km(*syd, *mel) < 730
     assert geo.compass(geo.bearing(*syd, *mel)) == "SW"
     assert geo.describe(syd, 0, 0) == ""
-    out = geo.render_map((*syd, "me"), [{"name": "mel", "type": 2, "lat": mel[0], "lon": mel[1]}], 60, 20,
-                         lambda n: "cyan", THEMES["irssi"])
-    assert "mel" in out.plain and "◉" in out.plain
+    view = View.fit([syd, mel], 60, 20)
+    out, off = geo.render_map(view, (*syd, "me"), [{"name": "mel", "type": 2, "lat": mel[0], "lon": mel[1]}],
+                              lambda n: "cyan", THEMES["irssi"])
+    assert "mel" in out.plain and "◉" in out.plain and off == 0
 
 
 def test_packet_summary_and_render():
@@ -113,8 +116,57 @@ def test_names_match_without_emoji_or_by_emoji_name():
 
 
 def test_map_leaves_far_outliers_off_the_plot():
-    me = (-37.81, 144.96, "me")
+    me = (-37.81, 144.96)
     near = [{"name": f"n{i}", "type": 1, "lat": -37.8 + i * 0.01, "lon": 144.95 + i * 0.01} for i in range(6)]
     far = {"name": "Goulburn", "type": 1, "lat": -34.75, "lon": 149.72}
-    out = geo.render_map(me, near + [far], 80, 20, lambda n: "cyan", THEMES["irssi"]).plain
-    assert "Goulburn" not in out and "1 off map" in out and "n3" in out
+    local, n_far = geo.local_points(me, near + [far])
+    assert n_far == 1 and far not in local
+
+
+def test_mvt_decode_and_basemap_drawing():
+    """Encode a tiny vector tile by hand, decode it, and draw it: water fill, a road and a place name."""
+    from meshssi.basemap import Canvas, View, decode_tile, draw
+
+    def varint(n):
+        out = b""
+        while True:
+            b, n = n & 0x7F, n >> 7
+            out += bytes([b | (0x80 if n else 0)])
+            if not n:
+                return out
+
+    def field(num, wire, payload):
+        key = varint(num << 3 | wire)
+        return key + (varint(payload) if wire == 0 else varint(len(payload)) + payload)
+
+    def zz(n):
+        return (n << 1) ^ (n >> 31)
+
+    def geom(cmds):
+        return b"".join(varint(c) for c in cmds)
+
+    def feature(gtype, tags, cmds):
+        return field(2, 2, b"".join(varint(t) for t in tags)) + field(3, 0, gtype) + field(4, 2, geom(cmds))
+
+    def layer(name, features, keys, values):
+        body = field(15, 0, 2) + field(1, 2, name.encode())
+        body += b"".join(field(2, 2, f) for f in features)
+        body += b"".join(field(3, 2, k.encode()) for k in keys)
+        body += b"".join(field(4, 2, field(1, 2, v.encode())) for v in values)
+        return field(3, 2, body + field(5, 0, 4096))
+
+    square = [1 << 3 | 1, zz(0), zz(0), 3 << 3 | 2, zz(2048), zz(0), zz(0), zz(2048), zz(-2048), zz(0), 7 | 1 << 3]
+    road = [1 << 3 | 1, zz(0), zz(3000), 1 << 3 | 2, zz(4096), zz(0)]
+    town = [1 << 3 | 1, zz(3000), zz(1000)]
+    tile = (layer("water", [feature(3, [], square)], [], [])
+            + layer("transportation", [feature(2, [0, 0], road)], ["class"], ["motorway"])
+            + layer("place", [feature(1, [0, 0, 1, 1], town)], ["class", "name"], ["town", "Testville"]))
+    decoded = decode_tile(tile)
+    assert decoded["water"][0]["parts"][0][:3] == [(0, 0), (2048, 0), (2048, 2048)]
+    assert decoded["transportation"][0]["props"] == {"class": "motorway"}
+    view = View(0.5, 0.5, 60.0, 30, 15)  # the whole tile (z0) spans 60 dots
+    cv = draw(view, [(0, 0, 0, decoded)], THEMES["irssi"]["map"])
+    assert isinstance(cv, Canvas)
+    assert any(any(row) for row in cv.bg)  # water filled
+    assert any(any(row) for row in cv.dots)  # road drawn
+    assert any(text == "Testville" for _, _, text, _ in cv.labels)

@@ -34,7 +34,7 @@ Requires Python 3.11+. `meshssi.sh` runs straight from the checkout; `.venv/bin/
 **Reliable DMs.** Each DM shows `…` while pending, `✓` when acked (with round-trip time) and `✗` if it failed. Missing acks trigger automatic retries, falling back to flood routing after `chat.flood_after` tries. If an ack arrives after meshssi gave up, the ✗ turns into ✓. Long messages are split to fit the packet size.
 
 **See the mesh.** `/rf` is a live packet monitor showing every packet the radio hears: RSSI, SNR, route, type and path. Hops are named when they're unambiguous, and channel traffic is decrypted where you hold the key. Every advert heard feeds a registry of nodes, whether or not they're your contacts, which powers:
-- the map (`/map`): distances and bearings from you
+- the map (`/map`): nodes over an OpenStreetMap background drawn in braille (coastline, water, roads, suburb names), with distances and bearings from you. Pan with the arrow keys and zoom with `+` / `-` while the input is empty.
 - `/heard`: every node heard, contact or not
 - names in paths and room posts
 - tab completion
@@ -136,7 +136,7 @@ Themes live in [`meshssi/themes.py`](meshssi/themes.py). A new one is usually a 
 | `/discover [chat\|repeater\|room\|sensor…]` | Ask nearby nodes to identify themselves (zero-hop) |
 | `/graphs` | Noise floor, signal, traffic and per-node SNR over time (also `/signal`) |
 | `/heard [filter]` | Every node heard over the air this session and before, contacts or not |
-| `/map` | Map of nodes with a known location, with distance and bearing from you |
+| `/map [in\|out\|fit\|center <node>\|basemap on\|off\|style braille\|dots\|cache]` | Map of nodes over OpenStreetMap, with distance and bearing from you (arrows pan, +/- zoom) |
 | `/rf [clear\|stats]` | Open the live packet monitor: every packet the radio hears (also `/monitor`, `/sniff`) |
 | `/scope [region\|*\|off] [-default]` | Flood scope: limit floods to a region (-default saves it on the radio) |
 | `/trace <node \| hash,hash,...>` | Trace a route, showing the SNR at every hop |
@@ -216,6 +216,19 @@ Requests are serialised, and each reply goes back to the client that asked. Push
 
 To keep it running on macOS, run it in `tmux`/`screen`, or as a LaunchAgent that runs `/path/to/meshssi/meshssi.sh --serve <radio>` with `KeepAlive` set to true.
 
+## The map
+
+`/map` draws your nodes over an OpenStreetMap background: water and coastline, roads (more detail as you zoom in), parks and place names, in your theme's colours. While the map is showing and the input line is empty, the arrow keys pan, `+` / `-` zoom, `0` fits everything back in, and `c` centres on you. Far-off outliers (the odd 500 km contact) stay in the table below the map so the local mesh fills the screen.
+
+Map data is © OpenStreetMap contributors, served as vector tiles by [OpenFreeMap](https://openfreemap.org) (no account or key). Tiles are cached in `~/.cache/meshssi/tiles/`, so areas you've looked at keep working offline. `/map cache` shows how much is stored.
+
+It degrades gracefully:
+- **Offline:** you get cached areas, and elsewhere just the nodes on a plain background.
+- **Bad data:** a tile that won't download or decode is left out and retried later.
+- **Missing braille in your font:** `/map style dots` draws plain dots instead.
+- **Opting out:** `/map basemap off` turns the background off entirely.
+- **Other tile sources:** `map.tiles` in the config accepts any OpenMapTiles-schema TileJSON URL or `{z}/{x}/{y}.pbf` template.
+
 ## Configuration
 
 `~/.config/meshssi/config.toml` is created on first run with every setting and its default. Change settings there or live with `/set section.key value`; `/set` alone lists everything, and `/set key -default` resets one. Highlights:
@@ -230,6 +243,7 @@ To keep it running on macOS, run it in `tmux`/`screen`, or as a LaunchAgent that
 | `device.auto_time_sync` | on | fix the radio clock on connect |
 | `device.advert_interval` | 0 | minutes between automatic adverts, or `/advert every N` |
 | `dashboard.interval` / `dashboard.watch` | 10 / `[]` | repeater polling (each poll transmits) |
+| `map.basemap` / `map.style` / `map.tiles` | on / braille / OpenFreeMap | the OpenStreetMap background (see [The map](#the-map)) |
 | `[rooms]` | | room name = password, for auto-login (`/room … -save`) |
 | `[aliases]` | `j`, `ll`, `wii` | or `/alias` |
 | `[radio_presets]` | au, eu, nz, us… | used by `/radio preset`. Check them against your local mesh before switching. |

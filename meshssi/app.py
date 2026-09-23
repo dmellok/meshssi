@@ -66,11 +66,38 @@ class PromptInput(Input):
         self.hist_pos = len(self.history)
 
     def action_history(self, step: int) -> None:
+        if self._map_mode():
+            self.app.map_key("up" if step < 0 else "down")
+            return
         if not self.history:
             return
         self.hist_pos = max(0, min(len(self.history), self.hist_pos + step))
         self.value = self.history[self.hist_pos] if self.hist_pos < len(self.history) else ""
         self.cursor_position = len(self.value)
+
+    def _map_mode(self) -> bool:
+        win = self.app.win
+        return win.kind == "view" and win.view == "map" and not self.value
+
+    async def _on_key(self, event: events.Key) -> None:
+        if self._map_mode() and event.character in ("+", "=", "-", "_", "0", "c"):
+            event.stop()
+            event.prevent_default()
+            self.app.map_key(event.character)
+            return
+        await super()._on_key(event)
+
+    def action_cursor_left(self, select: bool = False) -> None:
+        if self._map_mode():
+            self.app.map_key("left")
+        else:
+            super().action_cursor_left(select)
+
+    def action_cursor_right(self, select: bool = False) -> None:
+        if self._map_mode():
+            self.app.map_key("right")
+        else:
+            super().action_cursor_right(select)
 
     def action_complete(self) -> None:
         if self._comp is None or self.value != self._comp_value:
@@ -498,6 +525,26 @@ class MeshssiApp(CommandsMixin, App):
                     out.append(TYPE_GLYPH.get(h.get("type"), "?") + " ", dim)
                     out.append(h["name"], dim).append(f"  {ago(h.get('last')).replace(' ago', '')}\n", dim)
         self.query_one("#nicklist", Static).update(out)
+
+    def map_key(self, key: str) -> None:
+        """Pan and zoom the map from the keyboard (only while the map is showing and the input is empty)."""
+        from .views import MapState
+
+        if not hasattr(self, "map_state"):
+            self.map_state = MapState(self)
+        ms = self.map_state
+        moves = {"left": (-0.25, 0), "right": (0.25, 0), "up": (0, -0.25), "down": (0, 0.25)}
+        if key in moves:
+            ms.pan(*moves[key])
+        elif key in ("+", "="):
+            ms.zoom(2)
+        elif key in ("-", "_"):
+            ms.zoom(0.5)
+        elif key == "0":
+            ms.fit()
+        elif key == "c" and self.my_pos:
+            ms.center(*self.my_pos)
+        self.refresh_view()
 
     def refresh_view(self) -> None:
         w = self.win

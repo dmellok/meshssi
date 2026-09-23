@@ -53,6 +53,11 @@ async def main() -> list[str]:
         await app.run_command("rf")
         await shot("rf")
         await app.run_command("map")
+        for _ in range(80):  # give the OpenStreetMap background a moment to download and render
+            await pilot.pause(0.25)
+            ms = getattr(app, "map_state", None)
+            if ms and ms.cache and ms.cache[1] is not None and not ms.rendering and not ms.tiles.inflight:
+                break
         await shot("map")
         await app.run_command("graphs")
         await shot("graphs")

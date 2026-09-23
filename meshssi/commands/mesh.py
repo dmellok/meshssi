@@ -4,6 +4,7 @@ import asyncio
 
 from meshcore import EventType
 
+from .. import geo
 from ..util import ago
 from . import command
 
@@ -30,9 +31,53 @@ async def c_rf(app, args):
     app.switch(app.windows.index(win))
 
 
-@command("map", "mesh", "/map", "Map of nodes with a known location, with distance and bearing from you")
+@command("map", "mesh", "/map [in|out|fit|center <node>|basemap on|off|style braille|dots|cache]",
+         "Map of nodes over OpenStreetMap, with distance and bearing from you (arrows pan, +/- zoom)")
 async def c_map(app, args):
-    app.switch(app.windows.index(app.special_window("view", "map")))
+    from ..views import MapState
+
+    win = app.special_window("view", "map")
+    if not hasattr(app, "map_state"):
+        app.map_state = MapState(app)
+    ms = app.map_state
+    word, _, rest = args.partition(" ")
+    if word in ("in", "out"):
+        ms.zoom(2 if word == "in" else 0.5)
+    elif word == "fit":
+        ms.fit()
+    elif word == "center":
+        if rest in ("", "me"):
+            if not app.my_pos:
+                app.echo("Your node has no location; set one with /coords.", "error")
+                return
+            ms.center(*app.my_pos)
+        else:
+            node = app.find_contact(rest)
+            h = next((h for h in app.heard.values() if rest.lower() == h.get("name", "").lower()), None)
+            lat, lon = (node["adv_lat"], node["adv_lon"]) if node else ((h.get("lat"), h.get("lon")) if h else (None, None))
+            if not geo.has_fix(lat, lon):
+                app.echo(f"No location known for {rest!r}.", "error")
+                return
+            ms.center(lat, lon)
+    elif word == "basemap" and rest in ("on", "off"):
+        app.cfg["map"]["basemap"] = rest == "on"
+        app.cfg.save()
+        app.echo(f"OpenStreetMap background {rest}.", "ok")
+    elif word == "style" and rest in ("braille", "dots"):
+        app.cfg["map"]["style"] = rest
+        app.cfg.save()
+        app.echo(f"Map lines drawn with {rest}.", "ok")
+    elif word == "cache":
+        from ..basemap import CACHE_DIR
+
+        files = list(CACHE_DIR.rglob("*.pbf")) if CACHE_DIR.exists() else []
+        size = sum(f.stat().st_size for f in files)
+        app.echo(f"{len(files)} map tiles cached ({size / 1e6:.1f} MB) in {CACHE_DIR}")
+        return
+    elif args:
+        app.echo("Usage: /map [in|out|fit|center <node>|basemap on|off|style braille|dots|cache]", "error")
+        return
+    app.switch(app.windows.index(win))
 
 
 @command("graphs", "mesh", "/graphs", "Noise floor, signal, traffic and per-node SNR over time", aliases=("signal",))

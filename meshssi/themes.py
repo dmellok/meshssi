@@ -4,6 +4,8 @@ Most themes are built from a palette with `palette()`, which assigns every role;
 completed with `complete()` so newer roles (graphs, packet types, signal quality) always exist.
 """
 
+from textual.color import Color
+
 ROLES = ("background", "foreground", "bar_bg", "bar_fg", "bracket", "timestamp", "own_nick", "hilight", "hilight_text",
          "notice", "error", "ok", "dim", "meta", "sidebar_bg", "sidebar_border", "act", "unread", "nicks")
 
@@ -20,6 +22,7 @@ def palette(*, bg, fg, bar_bg, bar_fg, dim, muted, red, green, yellow, blue, mag
         "dim": dim, "meta": muted, "sidebar_bg": sidebar_bg or bg, "sidebar_border": border or muted,
         "act": [dim, f"bold {bright}", f"bold {magenta}"], "unread": f"bold {yellow}",
         "nicks": [cyan, green, yellow, magenta, blue, orange, red, *extra],
+        "blue": blue, "green": green,
     }
     t.update(overrides)
     return complete(t)
@@ -34,12 +37,23 @@ def complete(t: dict) -> dict:
     t.setdefault("status_ok", t["good"])
     t.setdefault("status_bad", t["error"])
     t.setdefault("graph", [n[i % len(n)] for i in range(8)])
+    bg, fg = t["background"], t["foreground"]
+    blue, green = t.get("blue", "#4f7fcf"), t.get("green", "#5f9f5f")
+    t.setdefault("map", {  # basemap colours, blended into the background so nodes stay the focus
+        "water_bg": blend(bg, blue, 0.30), "water": blend(bg, blue, 0.75), "park": blend(bg, green, 0.14),
+        "road_major": blend(bg, fg, 0.55), "road_minor": blend(bg, fg, 0.30), "rail": blend(bg, fg, 0.22),
+        "label": f"italic {blend(bg, fg, 0.62)}",
+    })
     t.setdefault("ptype", {
         "ADVERT": t["ok"], "GRP_TXT": n[0], "GRP_DATA": n[0], "TXT_MSG": n[3 % len(n)], "PATH": n[2 % len(n)],
         "TRACE": f"bold {n[2 % len(n)]}", "REQ": n[4 % len(n)], "RESPONSE": n[4 % len(n)], "ANON_REQ": n[4 % len(n)],
         "CONTROL": n[5 % len(n)], "ACK": t["dim"], "MULTIPART": t["dim"], "RAW_CUSTOM": t["dim"],
     })
     return t
+
+
+def blend(a: str, b: str, t: float) -> str:
+    return Color.parse(a).blend(Color.parse(b), t).hex
 
 
 THEMES: dict[str, dict] = {
@@ -54,6 +68,7 @@ THEMES: dict[str, dict] = {
                   "bright_yellow", "bright_magenta", "orange1", "orchid", "spring_green2", "deep_sky_blue1",
                   "light_salmon1", "khaki1", "plum1"],
         "graph": ["cyan", "green", "yellow", "magenta", "bright_blue", "orange1", "orchid", "green"],
+        "blue": "#5f87ff", "green": "#5faf5f",
     }),
     "midnight": palette(
         bg="#0b1020", fg="#c8d3f5", bar_bg="#1e2a4a", bar_fg="#c8d3f5", dim="#5b6a95", muted="#444a73",
@@ -73,6 +88,7 @@ THEMES: dict[str, dict] = {
         "dim": "#606060", "meta": "#505050", "sidebar_bg": "#0a0a0a", "sidebar_border": "#303030",
         "act": ["#808080", "bold #e0e0e0", "bold reverse"], "unread": "bold #ffffff",
         "nicks": ["#ffffff", "#d0d0d0", "#b0b0b0", "#e8e8e8"],
+        "blue": "#9a9a9a", "green": "#6a6a6a",
     }),
     "light": palette(
         bg="#fafafa", fg="#303030", bar_bg="#d7e3fc", bar_fg="#102040", dim="#909090", muted="#b0b0b0",

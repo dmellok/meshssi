@@ -42,6 +42,11 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "advert_interval": 0,  # minutes between automatic adverts, 0 = off
         "advert_flood": False,
     },
+    "map": {
+        "basemap": True,  # OpenStreetMap background (downloaded tiles are cached for offline use)
+        "style": "braille",  # braille, or "dots" if your font lacks braille characters
+        "tiles": "https://tiles.openfreemap.org/planet",  # TileJSON URL or a {z}/{x}/{y} template (MVT)
+    },
     "dashboard": {
         "interval": 10,  # minutes between status polls of /watch'ed repeaters
         "watch": [],  # repeater names or key prefixes
