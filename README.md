@@ -12,20 +12,29 @@ An irssi-style terminal client for [MeshCore](https://github.com/meshcore-dev/Me
 
 <sub>Screenshots are from `meshssi --demo`, a simulated mesh with made-up nodes. `scripts/screenshots.py` regenerates them.</sub>
 
+## Install
+
+macOS and Linux:
+
+```sh
+curl -fsSL https://github.com/dmellok/meshssi/releases/latest/download/install.sh | sh
+```
+
+This puts `meshssi` on your PATH in its own isolated environment, using [uv](https://docs.astral.sh/uv/) or pipx; if you have neither, it installs uv first. Re-run it to update; `uv tool uninstall meshssi` removes it. It needs Python 3.11+, and uv fetches that for you if needed.
+
+Or install it directly: `uv tool install git+https://github.com/dmellok/meshssi` (or `pipx install …`).
+
 ## Quick start
 
 ```sh
-git clone https://github.com/dmellok/meshssi && cd meshssi
-python3 -m venv .venv && .venv/bin/pip install -e .
-
-./meshssi.sh --demo                 # try it without a radio
-./meshssi.sh 192.168.1.50           # WiFi companion (TCP, port 5000 by default)
-./meshssi.sh /dev/cu.usbmodem1101   # USB serial companion
-./meshssi.sh --scan                 # find Bluetooth radios, then: ./meshssi.sh ble:<address>
-./meshssi.sh                        # reconnect to the last radio
+meshssi --demo                 # try it without a radio
+meshssi 192.168.1.50           # WiFi companion (TCP, port 5000 by default)
+meshssi /dev/cu.usbmodem1101   # USB serial companion
+meshssi --scan                 # find Bluetooth radios, then: meshssi ble:<address>
+meshssi                        # reconnect to the last radio
 ```
 
-Requires Python 3.11+. `meshssi.sh` runs straight from the checkout; `.venv/bin/meshssi` works too (see [Troubleshooting](#troubleshooting)).
+Working on meshssi itself? `git clone`, then `python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`, and run `./meshssi.sh`. See [Development](#development), and [Troubleshooting](#troubleshooting) if `.venv/bin/meshssi` can't find its module on macOS.
 
 ## What it does
 
