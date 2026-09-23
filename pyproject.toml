@@ -1,12 +1,17 @@
 [project]
 name = "meshssi"
-version = "0.1.0"
+version = "0.2.0"
 description = "An irssi-style terminal client for MeshCore companion radios"
-requires-python = ">=3.10"
+readme = "README.md"
+requires-python = ">=3.11"
 dependencies = [
     "meshcore>=2.3",
     "textual>=0.80",
+    "segno>=1.6",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff"]
 
 [project.scripts]
 meshssi = "meshssi.__main__:main"
@@ -15,5 +20,12 @@ meshssi = "meshssi.__main__:main"
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["meshssi"]
+[tool.setuptools.packages.find]
+include = ["meshssi*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 130

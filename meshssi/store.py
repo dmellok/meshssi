@@ -6,7 +6,6 @@ import re
 from pathlib import Path
 
 DATA_ROOT = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "meshssi"
-CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "meshssi" / "config.json"
 
 
 def _safe(key: str) -> str:
@@ -14,8 +13,8 @@ def _safe(key: str) -> str:
 
 
 class Store:
-    def __init__(self, node_key: str):
-        self.dir = DATA_ROOT / node_key[:12]
+    def __init__(self, node_key: str, root: Path = DATA_ROOT):
+        self.dir = root / node_key[:12]
         (self.dir / "logs").mkdir(parents=True, exist_ok=True)
 
     def _log(self, win_key: str) -> Path:
@@ -55,15 +54,3 @@ class Store:
 
     def save_state(self, state: dict) -> None:
         (self.dir / "state.json").write_text(json.dumps(state, indent=2))
-
-
-def load_config() -> dict:
-    try:
-        return json.loads(CONFIG_PATH.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def save_config(cfg: dict) -> None:
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
