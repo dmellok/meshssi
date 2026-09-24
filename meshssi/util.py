@@ -6,7 +6,7 @@ import zlib
 
 from rich.text import Text
 
-URL_RE = re.compile(r"(https?://[^\s<>\"']+|www\.[^\s<>\"']+)")
+URL_RE = re.compile(r"(https?://[^\s<>\"'\x00-\x1f\x7f-\x9f]+|www\.[^\s<>\"'\x00-\x1f\x7f-\x9f]+)")
 SPARKS = "▁▂▃▄▅▆▇█"
 
 
@@ -30,17 +30,26 @@ def fmt_duration(secs: int) -> str:
 
 
 def split_utf8(text: str, limit: int) -> list[str]:
-    """Split text into chunks of at most `limit` UTF-8 bytes, preferring word boundaries."""
+    """Split text into chunks of at most `limit` UTF-8 bytes, preferring word boundaries and never cutting
+    through an emoji sequence (ZWJ joins, variation selectors, skin tones). Empty chunks are never returned."""
+    limit = max(limit, 8)
+    joiners = ("\u200d", "\ufe0f", "\ufe0e") + tuple(chr(c) for c in range(0x1F3FB, 0x1F400))
     chunks: list[str] = []
+    text = text.strip()
     while len(text.encode()) > limit:
         cut = len(text)
-        while len(text[:cut].encode()) > limit:
+        while cut > 1 and len(text[:cut].encode()) > limit:
+            cut -= 1
+        # don't split inside an emoji sequence: back off to before its first character
+        while 1 < cut < len(text) and (text[cut] in joiners or text[cut - 1] == "\u200d"):
             cut -= 1
         space = text.rfind(" ", 0, cut)
         if space > cut // 2:
             cut = space
-        chunks.append(text[:cut].rstrip())
-        text = text[cut:].lstrip()
+        chunk = text[:cut].rstrip()
+        if chunk:
+            chunks.append(chunk)
+        text = text[max(cut, 1):].lstrip()
     if text:
         chunks.append(text)
     return chunks
@@ -63,7 +72,9 @@ def linkify(text: Text) -> Text:
     """Make URLs clickable in terminals that support OSC 8 hyperlinks."""
     plain = text.plain
     for m in URL_RE.finditer(plain):
-        url = m.group(0).rstrip(".,);:!?")
+        url = m.group(0).rstrip(".,;:!?")
+        while url.endswith(")") and url.count(")") > url.count("("):  # keep ")" that closes a "(" in the URL
+            url = url[:-1]
         href = url if url.startswith("http") else "https://" + url
         text.stylize(f"underline link {href}", m.start(), m.start() + len(url))
     return text
@@ -142,3 +153,22 @@ def name_matches(name: str, typed: str) -> bool:
         if any(" ".join(words[i:]).startswith(frag) for i in range(1, len(words))):
             return True
     return False
+
+
+_CONTROL = {c: None for c in list(range(0x00, 0x20)) + [0x7F] + list(range(0x80, 0xA0))}
+_CONTROL.update({0x09: " ", 0x0A: " ", 0x0D: " "})
+
+
+def clean(text) -> str:
+    """Make text from the mesh safe to display: drop terminal control characters (ESC, OSC, C1...) and
+    turn line breaks into spaces, so a remote node can't inject escape sequences or fake extra lines."""
+    return str(text).translate(_CONTROL) if text is not None else ""
+
+
+def write_private(path, text: str) -> None:
+    """Create a new file readable only by you. Refuses to overwrite (FileExistsError) or follow a symlink."""
+    import os
+
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)

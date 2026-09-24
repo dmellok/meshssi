@@ -13,12 +13,20 @@ PERMS = {0: "guest", 1: "read-only", 2: "read-write", 3: "admin"}
 
 @command("login", "remote", "/login <node> [password]", "Log into a repeater or room (blank password = guest)")
 async def c_login(app, args):
-    c, pwd = app.split_target(args)
-    c = c or app.need_contact("")
+    if args:
+        c, pwd = app.split_target(args, fallback=False)
+        if not c:  # never fall back to the open window: the password would go to whoever that is
+            app.echo(f"/login: {app.resolve_error or 'usage: /login <node> [password]'}", "error")
+            return
+    else:
+        c, pwd = app.need_contact("", types=(2, 3, 4)), ""
     if not c:
         return
+    if c["type"] not in (2, 3, 4):
+        app._wrong_type(c, (2, 3))
+        return
     app.echo(f"Logging into {c['adv_name']}…")
-    ev = await app.mc.commands.send_login_sync(c, pwd)
+    ev = await app.mesh_request(app.mc.commands.send_login_sync, c, pwd)
     if ev is not None and ev.type == EventType.LOGIN_SUCCESS:
         p = ev.payload
         level = PERMS.get(p.get("permissions", 3 if p.get("is_admin") else 0) & 3, "?")
@@ -38,14 +46,20 @@ async def c_logout(app, args):
 @command("rcmd", "remote", "/rcmd <node> <cli command>", "Run a CLI command on a repeater (log in first); the reply shows in its window",
          aliases=("rc",))
 async def c_rcmd(app, args):
-    c, cmd = app.split_target(args)
-    if not c and app.win.kind == "query":
-        c, cmd = app.contact(app.win.pubkey), args
+    here = app.contact(app.win.pubkey) if app.win.kind == "query" else None
+    c, cmd = app.split_target(args, fallback=False)
+    if here and (not c or c is here):  # in a node's window the whole line is its command
+        c, cmd = here, (cmd if c is here else args)
+    if not c and not here:
+        app.echo(f"/rcmd: {app.resolve_error or 'no such node'}. Usage: /rcmd <node> <command>", "error")
+        return
     if not c or not cmd:
         app.echo("Usage: /rcmd <node> <command>, e.g. /rcmd Ridgeline Rpt get radio", "error")
         return
     win = app.query_window(c)
-    app.add(win, {"k": "notice", "text": f"> {cmd}", "lvl": "dim"})
+    word = cmd.split(" ", 1)[0].lower()
+    shown = cmd if "password" not in cmd.lower() else f"{word} ••••••"  # don't keep passwords in scrollback
+    app.add(win, {"k": "notice", "text": f"> {shown}", "lvl": "dim"}, persist=False)
     await app.cmd(app.mc.commands.send_cmd(c, cmd))
 
 
@@ -55,7 +69,7 @@ async def c_rstatus(app, args):
     if not c:
         return
     app.echo(f"Requesting status from {c['adv_name']}…")
-    st = await app.mc.commands.req_status_sync(c)
+    st = await app.mesh_request(app.mc.commands.req_status_sync, c)
     if not st:
         app.echo("No response (try /login first).", "error")
         return
@@ -84,7 +98,7 @@ async def c_telemetry(app, args):
         if not c:
             return
         app.echo(f"Requesting telemetry from {c['adv_name']}…")
-        data, who = await app.mc.commands.req_telemetry_sync(c), c["adv_name"]
+        data, who = await app.mesh_request(app.mc.commands.req_telemetry_sync, c), c["adv_name"]
         if data is None:
             app.echo("No response.", "error")
             return
@@ -102,11 +116,11 @@ async def c_telemetry(app, args):
 @command("neighbours", "remote", "/neighbours <repeater>", "A repeater's neighbours, with the SNR it hears them at",
          aliases=("neighbors", "nb"))
 async def c_neighbours(app, args):
-    c = app.need_contact(args)
+    c = app.need_contact(args, types=(2,))
     if not c:
         return
     app.echo(f"Requesting neighbours from {c['adv_name']}…")
-    res = await app.mc.commands.fetch_all_neighbours(c)
+    res = await app.mesh_request(app.mc.commands.fetch_all_neighbours, c)
     if not res:
         app.echo("No response (try /login first).", "error")
         return
@@ -121,10 +135,10 @@ async def c_neighbours(app, args):
 
 @command("acl", "remote", "/acl <repeater|room>", "List who has access to a node (you must be admin)")
 async def c_acl(app, args):
-    c = app.need_contact(args)
+    c = app.need_contact(args, types=(2, 3))
     if not c:
         return
-    acl = await app.mc.commands.req_acl_sync(c)
+    acl = await app.mesh_request(app.mc.commands.req_acl_sync, c)
     if acl is None:
         app.echo("No response (log in as admin first).", "error")
         return
@@ -197,7 +211,7 @@ async def c_setperm(app, args):
 async def c_owner(app, args):
     c = app.need_contact(args)
     if c:
-        res = await app.mc.commands.req_owner_sync(c)
+        res = await app.mesh_request(app.mc.commands.req_owner_sync, c)
         app.echo(f"{c['adv_name']}: {res['name']} — owner: {res['owner'] or '(not set)'}" if res else "No response.",
                  "info" if res else "error")
 
@@ -206,14 +220,14 @@ async def c_owner(app, args):
 async def c_regions(app, args):
     c = app.need_contact(args)
     if c:
-        res = await app.mc.commands.req_regions_sync(c)
+        res = await app.mesh_request(app.mc.commands.req_regions_sync, c)
         app.echo(f"{c['adv_name']} regions: {res or '(none)'}" if res is not None else "No response.",
                  "info" if res is not None else "error")
 
 
 @command("watch", "remote", "/watch <repeater>", "Add a repeater to the (dash) dashboard; its status is polled over the mesh")
 async def c_watch(app, args):
-    c = app.need_contact(args)
+    c = app.need_contact(args, types=(2, 3))
     if not c:
         return
     app.dash[c["public_key"]] = (0, None)

@@ -23,7 +23,7 @@ from .notify import desktop_notify
 from .plugins import PluginManager
 from .store import Store
 from .themes import THEMES
-from .util import ago, expand_shortcodes, linkify, name_forms, name_matches, pick_color, split_utf8
+from .util import ago, clean, expand_shortcodes, linkify, name_forms, name_matches, pick_color, split_utf8
 
 CONTACT_TYPES = {0: "?", 1: "chat", 2: "repeater", 3: "room", 4: "sensor"}
 TYPE_GLYPH = {1: "@", 2: "R", 3: "#", 4: "S"}
@@ -158,7 +158,7 @@ class MeshssiApp(CommandsMixin, App):
         self.device_info: dict = {}
         self.channels: dict[int, dict] = {}
         self.stats: dict = {}
-        self.acks: dict[str, tuple[Window, dict, asyncio.Future]] = {}  # expected ack code -> message
+        self.acks: dict[str, tuple[Window, dict, asyncio.Future, float]] = {}  # ack code -> (window, msg, future, sent)
         self.pending_confirm: tuple[str, float] | None = None
         self.connected = False
         self.drops: list[float] = []  # recent disconnect times, to spot another client fighting for the radio
@@ -176,6 +176,8 @@ class MeshssiApp(CommandsMixin, App):
         self.last_advert = time.time()
         self._contacts_refresh: asyncio.Task | None = None
         self.plugins = PluginManager(self)
+        self._head = 0
+        self.resolve_error = ""
 
     # ── layout ────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -203,11 +205,62 @@ class MeshssiApp(CommandsMixin, App):
         for msg in self.plugins.load_all():
             self.status(*msg)
         self.refresh_chrome()
-        self.set_interval(1, self.refresh_statusbar)
-        self.set_interval(2, self.refresh_view)
-        self.set_interval(30, self.poll_stats)
-        self.set_interval(60, self.periodic)
+        self.set_interval(1, self._safely(self.refresh_statusbar))
+        self.set_interval(2, self._safely(self.refresh_view))
+        self.set_interval(30, self._safely(self.poll_stats))
+        self.set_interval(60, self._safely(self.periodic))
         self.run_worker(self.connect(), exclusive=True, group="connect")
+
+    def run_worker(self, work, *args, **kwargs):
+        """Background work reports its errors in (status) instead of shutting the app down."""
+        kwargs.setdefault("exit_on_error", False)
+        if asyncio.iscoroutine(work):
+            inner = work
+
+            async def guarded():
+                try:
+                    return await inner
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    self.status(f"Background task failed: {type(e).__name__}: {e}", "error")
+
+            work = guarded()
+        return super().run_worker(work, *args, **kwargs)
+
+    def _safely(self, fn):
+        async def tick():
+            try:
+                r = fn()
+                if asyncio.iscoroutine(r):
+                    await r
+            except Exception as e:  # noqa: BLE001 - a timer error must not end the app
+                self.log(f"timer {fn.__name__}: {e!r}")
+
+        return tick
+
+    async def mesh_request(self, fn, *args, **kwargs):
+        """Run a meshcore request that sends, gets MSG_SENT back, then waits (possibly many seconds) for the
+        remote node's answer. The radio lock is held only until our MSG_SENT/ERROR arrives, so no other
+        command can take that reply, and chat isn't blocked while we wait for the far end."""
+        mc = self.mc
+        if mc is None:
+            raise RuntimeError("not connected")
+        async with self.io:
+            sent = asyncio.get_running_loop().create_future()
+
+            def first(ev):
+                if not sent.done():
+                    sent.set_result(ev)
+
+            subs = [mc.subscribe(EventType.MSG_SENT, first), mc.subscribe(EventType.ERROR, first)]
+            task = asyncio.ensure_future(fn(*args, **kwargs))
+            try:
+                await asyncio.wait({sent, task}, timeout=15, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for sub in subs:
+                    sub.unsubscribe()
+        return await task
 
     @property
     def st(self) -> dict:
@@ -263,7 +316,7 @@ class MeshssiApp(CommandsMixin, App):
             return Text.from_markup(rec.get("text", ""))
         line = Text(f"{ts} ", style=t["timestamp"])
         if kind == "msg":
-            nick = rec.get("nick", "?")
+            nick = clean(rec.get("nick", "?"))
             if self.cfg.get("ui.show_hops", True):  # a fixed-width hop-count column before the nick
                 h = rec.get("hops")
                 if h is None:
@@ -277,8 +330,9 @@ class MeshssiApp(CommandsMixin, App):
                 line.append("<", t["timestamp"]).append(nick, t["hilight"]).append("> ", t["timestamp"])
             else:
                 line.append("<", t["timestamp"]).append(nick, self.nick_color(nick)).append("> ", t["timestamp"])
+            self._head = len(line.plain)
             body = Text()
-            self._append_body(body, rec.get("text", ""), t["hilight_text"] if rec.get("hl") else "")
+            self._append_body(body, clean(rec.get("text", "")), t["hilight_text"] if rec.get("hl") else "")
             line.append(linkify(body))
             st = rec.get("st")
             if st == "pending":
@@ -302,7 +356,9 @@ class MeshssiApp(CommandsMixin, App):
         elif kind == "reply":  # repeater / room CLI output
             nick = rec.get("nick", "?")
             line.append("-", t["notice"]).append(nick, "bold " + self.nick_color(nick))
-            line.append("- ", t["notice"]).append(rec.get("text", ""))
+            line.append("- ", t["notice"])
+            self._head = len(line.plain)
+            line.append(clean(rec.get("text", "")))
         else:
             lvl = rec.get("lvl", "info")
             marker, style = {
@@ -313,7 +369,8 @@ class MeshssiApp(CommandsMixin, App):
                 "dim": ("--- ", t["dim"]),
             }.get(lvl, ("-!- ", t["notice"]))
             line.append(marker, style)
-            body = Text.from_markup(rec.get("text", "")) if rec.get("markup") else Text(rec.get("text", ""))
+            self._head = len(line.plain)
+            body = Text.from_markup(rec.get("text", "")) if rec.get("markup") else Text(clean(rec.get("text", "")))
             body.stylize(t["error"].replace("bold ", "") if lvl == "error" else (t["dim"] if lvl == "dim" else ""))
             line.append(linkify(body))
         return line
@@ -336,7 +393,7 @@ class MeshssiApp(CommandsMixin, App):
         rec.setdefault("t", time.time())
         rec.setdefault("id", uuid.uuid4().hex[:10])
         win.recs.append(rec)
-        limit = int(self.cfg.get("ui.scrollback", 2000))
+        limit = max(100, int(self.cfg.get("ui.scrollback", 2000) or 2000))
         if len(win.recs) > limit:
             del win.recs[:-limit]
         if persist and self.store and win.kind in ("channel", "query"):
@@ -358,7 +415,7 @@ class MeshssiApp(CommandsMixin, App):
     def echo(self, text: str, lvl: str = "info", markup: bool = False) -> None:
         """Command output: into the current window (status for view windows), never persisted."""
         target = self.win if self.win.kind not in ("view", "rf") else self.windows[0]
-        self.add(target, {"k": "notice", "text": text, "lvl": lvl, "markup": markup}, persist=False)
+        self.add(target, {"k": "notice", "text": text, "lvl": lvl, "markup": markup, "echo": True}, persist=False)
 
     def echo_raw(self, markup: str) -> None:
         target = self.win if self.win.kind not in ("view", "rf") else self.windows[0]
@@ -367,16 +424,10 @@ class MeshssiApp(CommandsMixin, App):
     def wrapped(self, rec: dict, width: int) -> Text:
         """Render a record, wrapping long lines with a hanging indent so text never runs under the
         timestamp/nick column (irssi-style)."""
+        self._head = 0
         line = self.render_rec(rec)
         plain = line.plain
-        kind = rec.get("k")
-        indent = 0
-        if kind == "msg":
-            indent = plain.find("> ") + 2
-        elif kind == "reply":
-            indent = plain.find("- ", plain.find("-") + 1) + 2
-        elif kind == "notice":
-            indent = max(plain.find("-!- "), plain.find("--- ")) + 4
+        indent = self._head if rec.get("k") in ("msg", "reply", "notice") else 0
         head_cells = cell_len(plain[:indent]) if indent > 1 else 0
         if not head_cells or head_cells > width // 2 or cell_len(plain) <= width:
             return line
@@ -429,7 +480,8 @@ class MeshssiApp(CommandsMixin, App):
             self.call_after_refresh(self._fill_split)  # once the pane has its real width
 
     def _fill_split(self) -> None:
-        if not self.split_win:
+        if not self.split_win or self.split_win not in self.windows:
+            self.split_win = None
             return
         log2 = self.query_one("#log2", RichLog)
         log2.clear()
@@ -633,7 +685,8 @@ class MeshssiApp(CommandsMixin, App):
                     win.speakers[rec["nick"]] = rec["t"]
         # channels sort by slot after the status window; everything else goes at the end
         if win.kind == "channel":
-            pos = 1 + sum(1 for w in self.windows if w.kind == "channel" and w.channel_idx < win.channel_idx)
+            before = [i for i, w in enumerate(self.windows) if w.kind == "channel" and w.channel_idx < win.channel_idx]
+            pos = (before[-1] + 1) if before else 1
             self.windows.insert(pos, win)
             if pos <= self.current and len(self.windows) > 1:
                 self.current += 1
@@ -719,44 +772,83 @@ class MeshssiApp(CommandsMixin, App):
         hops = [p[i : i + width] for i in range(0, len(p), width)]
         return f"{n} hop{'s' if n > 1 else ''} via " + ",".join(self.resolve_hash(h) or h for h in hops)
 
-    def find_contact(self, query: str) -> dict | None:
+    def match_contacts(self, query: str) -> list[dict]:
+        """Contacts a typed name or key could mean, most specific tier first, with no fuzzy substring matching:
+        exact name > exact name without emoji (or with its emoji named) > full or 8+ hex key prefix > start
+        of the name > start of any word in it. An empty list means no match; more than one means ambiguous."""
+        self.resolve_error = ""
         if not self.mc:
-            return None
-        q = query.strip().lower()
+            return []
+        q = " ".join(query.strip().strip(":").lower().split())
         if not q:
-            return None
+            return []
         cs = list(self.mc.contacts.values())
-        q = " ".join(q.strip(":").split())
-        for test in (  # most to least specific; emoji in names can be skipped or typed by name (🐢 = turtle)
-            lambda c: c["adv_name"].lower() == q or q in name_forms(c["adv_name"]),
-            lambda c: c["public_key"].startswith(q) and len(q) >= 4,
+        for test in (
+            lambda c: c["adv_name"].lower() == q,
+            lambda c: q in name_forms(c["adv_name"]),
+            lambda c: len(q) >= 8 and c["public_key"].startswith(q),
             lambda c: any(f.startswith(q) for f in name_forms(c["adv_name"])),
-            lambda c: name_matches(c["adv_name"], q),
-            lambda c: any(q in f for f in name_forms(c["adv_name"])),
+            lambda c: name_matches(c["adv_name"], q),  # start of any word ("hops", "herb" for 🌿), never mid-word
         ):
             hits = [c for c in cs if test(c)]
-            if len(hits) == 1:
-                return hits[0]
-            if len(hits) > 1:
-                return None
-        return None
+            if hits:
+                if len(hits) > 1:
+                    names = ", ".join(f"{c['adv_name']} ({c['public_key'][:8]})" for c in hits[:5])
+                    self.resolve_error = f"{query!r} could be {names}; type more of the name, or a key prefix"
+                return hits
+        self.resolve_error = f"no contact matches {query!r}"
+        return []
 
-    def split_target(self, args: str) -> tuple[dict | None, str]:
-        """Split '<contact> rest' where contact names may contain spaces."""
+    def find_contact(self, query: str) -> dict | None:
+        hits = self.match_contacts(query)
+        return hits[0] if len(hits) == 1 else None
+
+    def split_target(self, args: str, fallback: bool = True) -> tuple[dict | None, str]:
+        """Split '<contact> rest' where contact names may contain spaces. The longest name spelling the
+        arguments start with wins; a tie between different contacts, or a leftover word that continues some
+        other contact's name ("Pat Smiht ..." with "Pat Smith" around), is refused rather than guessed."""
+        self.resolve_error = ""
         if not self.mc:
             return None, args
-        low = args.lower()
-        best = None  # longest spelling of a name (with or without its emoji) that the arguments start with
-        for c in self.mc.contacts.values():
-            for form in name_forms(c["adv_name"]):
-                if low.startswith(form) and (len(low) == len(form) or low[len(form)] == " "):
-                    if best is None or len(form) > best[1]:
-                        best = (c, len(form))
-        if best:
-            return best[0], args[best[1] :].strip()
         if args.startswith('"') and '"' in args[1:]:
             end = args.index('"', 1)
             return self.find_contact(args[1:end]), args[end + 1 :].strip()
+        low = args.lower()
+        matches: dict[str, tuple[dict, int, bool]] = {}
+        for c in self.mc.contacts.values():
+            for form in name_forms(c["adv_name"]):
+                if low.startswith(form) and (len(low) == len(form) or low[len(form)] == " "):
+                    exact = form == c["adv_name"].lower()
+                    prev = matches.get(c["public_key"])
+                    if not prev or len(form) > prev[1]:
+                        matches[c["public_key"]] = (c, len(form), exact)
+        if matches:
+            best = max(n for _, n, _ in matches.values())
+            top = [(c, e) for c, n, e in matches.values() if n == best]
+            if len(top) > 1:
+                exact = [c for c, e in top if e]
+                if len(exact) == 1:
+                    top = [(exact[0], True)]
+                else:
+                    self.resolve_error = ("the name matches " + ", ".join(f"{c['adv_name']} ({c['public_key'][:8]})" for c, _ in top)
+                                          + '; use a key prefix or put the full name in "quotes"')
+                    return None, args
+            c = top[0][0]
+            rest = args[best:].strip()
+            nxt = rest.split(" ", 1)[0].lower()
+            if nxt:
+                for other in self.mc.contacts.values():
+                    if other is c:
+                        continue
+                    for form in name_forms(other["adv_name"]):
+                        tail = form[best:].strip() if form.startswith(low[:best] + " ") else ""
+                        if tail and (tail.startswith(nxt[:2]) or nxt.startswith(tail[:2])):
+                            self.resolve_error = (f"did you mean {other['adv_name']}? It could also be {c['adv_name']} "
+                                                  f'followed by "{rest}". Put the name in "quotes" to be sure')
+                            return None, args
+            return c, rest
+        if not fallback:
+            return None, args
         head, _, rest = args.partition(" ")
         return self.find_contact(head), rest.strip()
 
@@ -830,19 +922,26 @@ class MeshssiApp(CommandsMixin, App):
         ):
             mc.subscribe(etype, handler)
         mc.subscribe(EventType.MESSAGES_WAITING, lambda e: self.fetch_messages())
+        try:  # say who we are, so a `meshssi --serve` daemon can keep our message cursor apart from other apps
+            async with self.io:
+                await mc.commands.send(b"\x01\x03      meshssi", [EventType.SELF_INFO, EventType.ERROR], timeout=3)
+        except Exception:  # noqa: BLE001
+            pass
         await self.on_connected()
 
     async def on_connected(self) -> None:
         mc = self.mc
         self.connected = True
-        self.drops.clear()
         self.self_info = dict(mc.self_info)
         self.store = self.make_store(self.self_info["public_key"])
         async with self.io:
             ev = await mc.commands.send_device_query()
             if not ev.is_error():
                 self.device_info = ev.payload
-        await self.refresh_contacts()
+        try:
+            await self.refresh_contacts()
+        except RuntimeError as e:
+            self.status(f"{e}; carrying on, /refresh to try again.", "error")
         state = self.store.load_state()
         for k, v in state.get("heard", {}).items():
             self.heard.setdefault(k, v)
@@ -881,6 +980,8 @@ class MeshssiApp(CommandsMixin, App):
             ev = await waiter
         if ev is None:
             raise RuntimeError("timed out fetching contacts")
+        for c in self.mc.contacts.values():  # names come from the air: strip terminal control characters
+            c["adv_name"] = clean(c.get("adv_name"))
 
     def schedule_contacts_refresh(self) -> None:
         """Debounced contact reload after adverts/path changes (bursts of adverts arrive together)."""
@@ -900,20 +1001,36 @@ class MeshssiApp(CommandsMixin, App):
         self._contacts_refresh = asyncio.create_task(later())
 
     async def load_channels(self) -> None:
-        self.channels.clear()
+        if not hasattr(self, "_channels_lock"):
+            self._channels_lock = asyncio.Lock()
+        async with self._channels_lock:  # overlapping reloads would delete each other's windows
+            await self._load_channels()
+
+    async def _load_channels(self) -> None:
+        viewing = self.win
+        found: dict[int, dict] = {}
         for idx in range(self.device_info.get("max_channels", 8)):
             async with self.io:
+                if not self.mc:
+                    return
                 ev = await self.mc.commands.get_channel(idx)
             if ev.is_error():
                 break
-            ch = ev.payload
-            if ch.get("channel_name"):
-                self.channels[idx] = ch
-                self.open_window(Window("channel", f"chan:{ch['channel_name']}", ch["channel_name"], channel_idx=idx))
-        # drop windows for channels that vanished
-        for w in [w for w in self.windows if w.kind == "channel" and w.channel_idx not in self.channels]:
+            if ev.payload.get("channel_name"):
+                found[idx] = ev.payload
+        self.channels = found
+        for idx, ch in found.items():
+            self.open_window(Window("channel", f"chan:{ch['channel_name']}", ch["channel_name"], channel_idx=idx))
+        # drop windows for channels that vanished or whose slot now holds a different channel
+        for w in [w for w in self.windows if w.kind == "channel" and
+                  self.channels.get(w.channel_idx, {}).get("channel_name") != w.name]:
             self.windows.remove(w)
-        self.current = min(self.current, len(self.windows) - 1)
+            if self.split_win is w:
+                self.split_win = None
+        # keep looking at the same window: indices shift when windows come and go
+        self.current = self.windows.index(viewing) if viewing in self.windows else min(self.current, len(self.windows) - 1)
+        self.redraw()
+        self.refresh_chrome()
 
     async def check_clock(self) -> None:
         async with self.io:
@@ -934,6 +1051,8 @@ class MeshssiApp(CommandsMixin, App):
             return
         sample = {"t": time.time()}
         async with self.io:
+            if not self.mc:
+                return
             for cmd in (self.mc.commands.get_stats_core, self.mc.commands.get_stats_radio, self.mc.commands.get_stats_packets):
                 ev = await cmd()
                 if not ev.is_error():
@@ -953,7 +1072,10 @@ class MeshssiApp(CommandsMixin, App):
                 await self.mc.commands.send_advert(flood=bool(self.cfg.get("device.advert_flood")))
             self.last_advert = time.time()
             self.add(self.windows[0], {"k": "notice", "text": "Sent scheduled advert.", "lvl": "dim"}, activity=0)
-        interval = float(self.cfg.get("dashboard.interval", 10)) * 60
+        cutoff = time.time() - 3600  # forget acks we've waited an hour for
+        for code in [k for k, v in self.acks.items() if v[3] < cutoff]:
+            self.acks.pop(code, None)
+        interval = max(1.0, float(self.cfg.get("dashboard.interval", 10))) * 60
         for key, (t, _) in list(self.dash.items()):
             if time.time() - t >= interval:
                 self.run_worker(self.poll_repeater(key), group=f"dash-{key}")
@@ -970,18 +1092,25 @@ class MeshssiApp(CommandsMixin, App):
         if not c:
             return
         self.dash[key] = (time.time(), self.dash.get(key, (0, None))[1])
-        st = await self.mc.commands.req_status_sync(c)
+        st = await self.mesh_request(self.mc.commands.req_status_sync, c)
+        if key not in self.dash:  # /unwatch'ed while we waited
+            return
         self.dash[key] = (time.time(), st if st else self.dash[key][1])
         if st is None:
             self.add(self.windows[0], {"k": "notice", "text": f"(dash) no status reply from {c['adv_name']}",
                                        "lvl": "dim"}, activity=0)
 
     async def auto_login_rooms(self) -> None:
-        for name, pwd in (self.cfg["rooms"] or {}).items():
-            c = self.find_contact(name)
-            if not c:
+        """Log into saved rooms. Only an exact key match that is a room server gets the password, so a node
+        that merely advertises a similar name can't collect it."""
+        for saved, pwd in list((self.cfg["rooms"] or {}).items()):
+            c = self.mc.contacts.get(saved.lower()) if self.mc else None
+            if c is None:  # an older entry saved by name: exact name only
+                named = [x for x in (self.mc.contacts.values() if self.mc else []) if x["adv_name"] == saved]
+                c = named[0] if len(named) == 1 else None
+            if not c or c.get("type") != 3:
                 continue
-            ev = await self.mc.commands.send_login_sync(c, str(pwd))
+            ev = await self.mesh_request(self.mc.commands.send_login_sync, c, str(pwd))
             ok = ev is not None and ev.type == EventType.LOGIN_SUCCESS
             self.status(f"{'Logged into' if ok else 'Could not log into'} room {c['adv_name']}", "ok" if ok else "error",
                         win=self.query_window(c))
@@ -992,6 +1121,8 @@ class MeshssiApp(CommandsMixin, App):
     async def _fetch_messages(self) -> None:
         while self.mc and self.connected:
             async with self.io:
+                if not self.mc:
+                    return
                 ev = await self.mc.commands.get_msg()
             if ev.type in (EventType.NO_MORE_MSGS, EventType.ERROR):
                 return
@@ -1010,12 +1141,12 @@ class MeshssiApp(CommandsMixin, App):
 
     def note_heard(self, key: str, name: str, type_: int, lat=None, lon=None, last=None, **extra) -> None:
         h = self.heard.setdefault(key, {})
-        h.update(name=name, type=type_, last=last or time.time(), **extra)
+        h.update(name=clean(name), type=type_, last=last or time.time(), **extra)
         if geo.has_fix(lat, lon):
             h.update(lat=lat, lon=lon)
 
     async def on_contact_msg(self, ev) -> None:
-        p = ev.payload
+        p = dict(ev.payload, text=clean(ev.payload.get("text")))
         c = self.contact(p["pubkey_prefix"])
         nick = c["adv_name"] if c else (self.name_for(p["pubkey_prefix"]) or p["pubkey_prefix"])
         if self.is_ignored(nick):
@@ -1042,7 +1173,7 @@ class MeshssiApp(CommandsMixin, App):
             await self.say(win, f"[away] {self.away or 'not here right now'}")
 
     async def on_channel_msg(self, ev) -> None:
-        p = ev.payload
+        p = dict(ev.payload, text=clean(ev.payload.get("text")))
         idx = p["channel_idx"]
         if idx not in self.channels:
             await self.load_channels()
@@ -1095,7 +1226,8 @@ class MeshssiApp(CommandsMixin, App):
         """Our own channel message relayed back to us by a repeater: bump its heard-by count."""
         text = s["message"][len(self.my_name) + 2 :]
         for win, rec in reversed(self.sent_chan):
-            if rec["text"] == text and s.get("sender_timestamp") in (None, rec.get("st_ts")):
+            if (rec["text"] == text and s.get("sender_timestamp") in (None, rec.get("st_ts"))
+                    and s.get("chan_name") in (None, win.name)):
                 rec["heard"] = rec.get("heard", 0) + 1
                 if s["hops"]:
                     rec.setdefault("heard_via", []).append(s["hop_names"][-1] or s["hops"][-1])
@@ -1106,11 +1238,13 @@ class MeshssiApp(CommandsMixin, App):
     async def on_ack(self, ev) -> None:
         entry = self.acks.pop(ev.payload.get("code", ""), None)
         if entry:
-            win, rec, fut = entry
+            win, rec, fut, _ = entry
             if not fut.done():
                 fut.set_result(ev.payload.get("trip_time"))
-            else:  # a late ack after we'd given up: it did get there
+            else:  # a late ack after we'd given up on it: it did get there
                 self.set_delivery(win, rec, "ok")
+            for code in [k for k, v in self.acks.items() if v[1] is rec]:  # its other attempts can't matter now
+                self.acks.pop(code, None)
 
     def set_delivery(self, win: Window, rec: dict, st: str) -> None:
         if rec.get("st") == st:
@@ -1129,6 +1263,7 @@ class MeshssiApp(CommandsMixin, App):
 
     async def on_new_contact(self, ev) -> None:
         c = ev.payload
+        c["adv_name"] = clean(c.get("adv_name"))
         self.note_heard(c["public_key"], c["adv_name"], c["type"], c.get("adv_lat"), c.get("adv_lon"), c.get("last_advert"))
         self.status(f"New node heard: {c['adv_name']} ({CONTACT_TYPES.get(c['type'], '?')}, "
                     f"{c['public_key'][:12]}) — /accept {c['adv_name']}", "join")
@@ -1162,18 +1297,8 @@ class MeshssiApp(CommandsMixin, App):
         self.refresh_chrome()
 
     async def on_disconnected(self, ev) -> None:
+        # only sent once meshcore has given up reconnecting (or on a manual disconnect)
         if ev.payload.get("reason") == "manual_disconnect":
-            return
-        now = time.time()
-        self.drops = [t for t in self.drops if now - t < 60] + [now]
-        if len(self.drops) >= 3 and self.mc:
-            # WiFi companions serve one client at a time; a newcomer kicks the old one off
-            self.connected = False
-            mc, self.mc = self.mc, None
-            self.run_worker(mc.disconnect())
-            self.status("The radio keeps dropping us — another client (phone app, Home Assistant…) is probably "
-                        "connected to it. Disconnect that (or share the radio with `meshssi --serve`), then /reconnect.", "error")
-            self.refresh_chrome()
             return
         if self.connected:
             self.connected = False
@@ -1181,9 +1306,22 @@ class MeshssiApp(CommandsMixin, App):
             self.refresh_chrome()
 
     async def on_reconnected(self, ev) -> None:
-        if not self.connected and self.mc:
-            self.status("Reconnected.", "ok")
-            await self.on_connected()
+        """meshcore reconnects by itself and only reports CONNECTED(reconnected), never the drop, so this is
+        where we notice a flapping link and resync what the radio queued while we were away."""
+        if not self.mc or not (ev.payload.get("reconnected") or not self.connected):
+            return
+        now = time.time()
+        self.drops = [t for t in self.drops if now - t < 60] + [now]
+        if len(self.drops) >= 3:
+            self.connected = False
+            mc, self.mc = self.mc, None
+            self.run_worker(mc.disconnect())
+            self.status("The radio keeps dropping us — another client (phone app, Home Assistant…) is probably "
+                        "connected to it. Disconnect that (or share the radio with `meshssi --serve`), then /reconnect.", "error")
+            self.refresh_chrome()
+            return
+        self.status("Reconnected; resyncing.", "ok")
+        await self.on_connected()
 
     async def action_quit(self) -> None:
         self.save_heard()
@@ -1239,7 +1377,7 @@ class MeshssiApp(CommandsMixin, App):
 
     async def _deliver(self, win: Window, c: dict, recs: list[dict]) -> None:
         """Send DMs in order, retrying on missing acks and falling back to flood routing."""
-        retries = max(1, int(self.cfg.get("chat.dm_retries", 3)))
+        retries = max(1, min(8, int(self.cfg.get("chat.dm_retries", 3))))
         flood_after = int(self.cfg.get("chat.flood_after", 2))
         for rec in recs:
             fut = asyncio.get_running_loop().create_future()
@@ -1250,12 +1388,16 @@ class MeshssiApp(CommandsMixin, App):
                         await self.mc.commands.reset_path(c)
                     self.status(f"No ack from {c['adv_name']} on its stored route; flooding instead.", "dim", win=win)
                 async with self.io:
-                    ev = await self.mc.commands.send_msg(c, rec["text"], timestamp=ts, attempt=attempt)
-                if ev.is_error():
-                    self.set_delivery(win, rec, "fail")
-                    self.echo(f"Send failed: {ev.payload}", "error")
+                    if not self.mc:
+                        ev = None
+                    else:
+                        ev = await self.mc.commands.send_msg(c, rec["text"], timestamp=ts, attempt=attempt % 4)
+                if ev is None or ev.is_error():
+                    for r in recs[recs.index(rec):]:  # this chunk and everything after it
+                        self.set_delivery(win, r, "fail")
+                    self.echo(f"Send failed: {ev.payload if ev else 'disconnected'}", "error")
                     return
-                self.acks[ev.payload["expected_ack"].hex()] = (win, rec, fut)
+                self.acks[ev.payload["expected_ack"].hex()] = (win, rec, fut, time.time())
                 if attempt:
                     rec["try"] = attempt + 1
                     if win is self.win:
@@ -1268,4 +1410,5 @@ class MeshssiApp(CommandsMixin, App):
                     self.plugins.emit("sent", win=win, rec=rec)
                     break
             else:
+                fut.cancel()  # a late ack now flips ✗ to ✓ (see on_ack)
                 self.set_delivery(win, rec, "fail")

@@ -112,7 +112,8 @@ async def c_trace(app, args):
     if not args:
         app.echo("Usage: /trace <repeater>   or   /trace a1b2,c3d4,a1b2 (explicit round trip)", "error")
         return
-    if "," in args or all(ch in "0123456789abcdefABCDEF" for ch in args) and len(args) in (2, 4, 8):
+    if "," in args or (not app.find_contact(args) and all(ch in "0123456789abcdefABCDEF" for ch in args)
+                       and len(args) in (2, 4, 8)):
         hops = [h.strip().lower() for h in args.split(",") if h.strip()]
         label = args
     else:

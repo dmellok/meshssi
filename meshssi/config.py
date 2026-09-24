@@ -3,6 +3,7 @@
 import copy
 import json
 import os
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -75,25 +76,42 @@ DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 
+BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _toml_str(v: str) -> str:
+    out = json.dumps(v, ensure_ascii=False)
+    return out.replace("\x7f", "\\u007f")  # TOML forbids a raw DEL
+
+
+def _toml_key(k: str) -> str:
+    return k if BARE_KEY.match(k) else _toml_str(k)
+
+
 def _toml_value(v: Any) -> str:
+    import datetime as _dt
+
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, (int, float)):
         return repr(v)
     if isinstance(v, str):
-        return json.dumps(v, ensure_ascii=False)
+        return _toml_str(v)
+    if isinstance(v, (_dt.date, _dt.time)):
+        return v.isoformat()
     if isinstance(v, (list, tuple)):
         return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"{_toml_key(k)} = {_toml_value(x)}" for k, x in v.items()) + "}"
     raise TypeError(f"can't write {type(v).__name__} to TOML")
 
 
 def dumps(data: dict[str, dict[str, Any]]) -> str:
     out = ["# meshssi settings. Edit here or with /set section.key value inside the app.\n"]
     for section, values in data.items():
-        out.append(f"[{section}]")
+        out.append("[" + ".".join(_toml_key(part) for part in section.split(".")) + "]")
         for k, v in values.items():
-            key = k if k.replace("_", "").replace("-", "").isalnum() else json.dumps(k, ensure_ascii=False)
-            out.append(f"{key} = {_toml_value(v)}")
+            out.append(f"{_toml_key(k)} = {_toml_value(v)}")
         out.append("")
     return "\n".join(out)
 
@@ -106,8 +124,8 @@ class Config:
         if path.exists():
             try:
                 loaded = tomllib.loads(path.read_text(encoding="utf-8"))
-            except tomllib.TOMLDecodeError as e:
-                self.error = f"{path}: {e} (using defaults)"
+            except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+                self.error = f"{path} couldn't be read ({e}); using defaults for now and NOT saving over it — fix it by hand"
                 loaded = {}
             for section, values in loaded.items():
                 if not isinstance(values, dict):
@@ -132,31 +150,50 @@ class Config:
                 pass
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(dumps(self.data), encoding="utf-8")
+        """Write atomically, readable only by you (it can hold room passwords), and never over a file we
+        couldn't parse: that would silently replace the user's settings with defaults."""
+        if self.error:
+            return
+        text = dumps(self.data)
+        tomllib.loads(text)  # refuse to write anything we couldn't read back
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self.path)
 
     def __getitem__(self, section: str) -> dict[str, Any]:
         return self.data.setdefault(section, {})
 
     def get(self, dotted: str, default: Any = None) -> Any:
-        section, _, key = dotted.partition(".")
+        section, _, key = dotted.rpartition(".")
         return self.data.get(section, {}).get(key, default)
 
     def set(self, dotted: str, raw: str) -> Any:
         """Set section.key from a string typed at the prompt, coercing to the existing type."""
-        section, _, key = dotted.partition(".")
+        section, _, key = dotted.rpartition(".")
+        if section == "rooms":
+            raise KeyError("room passwords are set with /room <room> <password> -save")
         if not key:
             raise KeyError("use section.key, e.g. chat.dm_retries")
         current = self.data.get(section, {}).get(key)
-        if section not in self.data or (key not in self.data[section] and section not in ("rooms", "aliases", "radio_presets")):
+        free_form = section in ("aliases", "radio_presets") or section.startswith("plugin.")
+        if not free_form and (section not in self.data or key not in self.data[section]):
             raise KeyError(f"unknown setting {dotted} — /set lists them")
         value = parse_value(raw, current)
+        self.data.setdefault(section, {})
+        if section == "radio_presets" and not (isinstance(value, list) and len(value) == 4):
+            raise ValueError("a preset is [MHz, bandwidth kHz, SF, CR], e.g. [916.575, 62.5, 7, 8]")
+        if section == "radio_presets":
+            value = [float(value[0]), float(value[1]), int(value[2]), int(value[3])]
         self.data[section][key] = value
         self.save()
         return value
 
     def unset(self, dotted: str) -> None:
-        section, _, key = dotted.partition(".")
+        section, _, key = dotted.rpartition(".")
         self.data.get(section, {}).pop(key, None)
         if key in DEFAULTS.get(section, {}):
             self.data[section][key] = copy.deepcopy(DEFAULTS[section][key])
@@ -175,8 +212,12 @@ def parse_value(raw: str, like: Any) -> Any:
         return int(raw)
     if isinstance(like, float):
         return float(raw)
-    if isinstance(like, list):
+    if isinstance(like, list) or like is None and raw.startswith("["):
         if raw.startswith("["):
-            return tomllib.loads(f"v = {raw}")["v"]
-        return [x.strip() for x in raw.split(",") if x.strip()]
+            items = tomllib.loads(f"v = {raw}")["v"]
+        else:
+            items = [x.strip() for x in raw.split(",") if x.strip()]
+        if isinstance(like, list) and all(isinstance(x, str) for x in like):
+            items = [str(x) for x in items]  # lists of words (highlights, ignores...) stay words
+        return items
     return raw

@@ -1,17 +1,20 @@
 """Desktop notifications (macOS via osascript, Linux via notify-send)."""
 
 import asyncio
-import json
 import shutil
 import sys
 
+from .util import clean
+
 
 async def desktop_notify(title: str, body: str) -> None:
-    if sys.platform == "darwin":
-        script = f"display notification {json.dumps(body)} with title {json.dumps(title)}"
-        cmd = ["osascript", "-e", script]
+    title, body = clean(title)[:120], clean(body)[:400]
+    if sys.platform == "darwin":  # passed as arguments, never spliced into the script
+        cmd = ["osascript", "-e", "on run argv", "-e",
+               "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", title, body]
     elif shutil.which("notify-send"):
-        cmd = ["notify-send", "--app-name=meshssi", title, body]
+        escape = str.maketrans({"&": "&amp;", "<": "&lt;", ">": "&gt;"})  # many daemons render markup
+        cmd = ["notify-send", "--app-name=meshssi", "--", title.translate(escape), body.translate(escape)]
     else:
         return
     try:

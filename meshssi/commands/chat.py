@@ -9,19 +9,27 @@ from . import command
 
 @command("msg", "chat", "/msg <contact|#channel> <text>", "Send a message without switching windows", aliases=("m",))
 async def c_msg(app, args):
-    if args.startswith("#") or args.lower().startswith("public "):
-        name, _, text = args.partition(" ")
-        win = app.need_channel(name)
+    first, _, rest = args.partition(" ")
+    chan = next((w for w in app.windows if w.kind == "channel" and w.name.lower() == first.lower()), None)
+    if args.startswith("#") or chan:
+        c, _ = app.split_target(args, fallback=False)
+        if c and not args.startswith("#"):  # "Public Works ..." could be a contact or the Public channel
+            app.echo(f"Ambiguous: {first} is a channel and {c['adv_name']} is a contact. "
+                     f"Use /msg #{first.lstrip('#')} ... or put the contact in \"quotes\".", "error")
+            return
+        win, text = app.need_channel(first), rest
         if not win:
             return
     else:
         c, text = app.split_target(args)
         if not c:
-            app.echo("Usage: /msg <contact> <text> (tab completes names)", "error")
+            app.echo(f"/msg: {app.resolve_error or 'usage: /msg <contact> <text>'}", "error")
             return
         win = app.query_window(c)
-    if text:
-        await app.say(win, text)
+    if not text.strip():
+        app.echo(f"Nothing to send. /query {win.name} opens the window.", "error")
+        return
+    await app.say(win, text)
 
 
 @command("query", "chat", "/query <contact>", "Open a DM window with a contact", aliases=("dm",))
@@ -43,11 +51,18 @@ async def c_join(app, args):
         app.switch(app.windows.index(existing))
         return
     if name.startswith("#"):
+        if len(parts) > 1:
+            app.echo(f"{name} is a hashtag channel: its key comes from the name, so anyone can join it and the key "
+                     f"you gave would be ignored. For a private channel use a name without #.", "error")
+            return
         secret = None
-    elif len(parts) == 2 and len(parts[1]) == 32:
+    elif len(parts) == 2 and len(parts[1]) == 32 and all(ch in "0123456789abcdefABCDEF" for ch in parts[1]):
         secret = bytes.fromhex(parts[1])
     else:
         app.echo("Private channels need their 16-byte key as 32 hex chars. Hashtag channels (#name) derive it.", "error")
+        return
+    if len(name.encode()) > 31:
+        app.echo("Channel names are limited to 31 bytes on the radio.", "error")
         return
     free = next((i for i in range(1, app.device_info.get("max_channels", 8)) if i not in app.channels), None)
     if free is None:
@@ -55,7 +70,10 @@ async def c_join(app, args):
         return
     await app.cmd(app.mc.commands.set_channel(free, name, secret))
     await app.load_channels()
-    win = next(w for w in app.windows if w.kind == "channel" and w.channel_idx == free)
+    win = next((w for w in app.windows if w.kind == "channel" and w.channel_idx == free), None)
+    if win is None:
+        app.echo(f"The radio didn't keep {name} in slot {free}.", "error")
+        return
     app.switch(app.windows.index(win))
     app.status(f"Joined {name} (slot {free})", "join", win=win)
 
@@ -65,7 +83,10 @@ async def c_part(app, args):
     win = app.need_channel(args)
     if not win:
         return
-    if win.channel_idx == 0 and not app.confirm(f"part {win.name} (slot 0, the public channel)"):
+    what = "slot 0, the public channel" if win.channel_idx == 0 else (
+        "hashtag: rejoin any time with /join" if win.name.startswith("#") else
+        "PRIVATE: its key is deleted from the radio; /key shows it if you need to save it")
+    if not app.confirm(f"part {win.name} ({what})"):
         return
     await app.cmd(app.mc.commands.set_channel(win.channel_idx, "", bytes(16)))
     app.channels.pop(win.channel_idx, None)
@@ -89,8 +110,8 @@ async def c_key(app, args):
 
 @command("lastlog", "chat", "/lastlog [-all] <text>", "Search scrollback (current window, or all with -all)", aliases=("grep",))
 async def c_lastlog(app, args):
-    everywhere = args.startswith("-all ")
-    needle = args[5:].strip() if everywhere else args
+    everywhere = args == "-all" or args.startswith("-all ")
+    needle = args[4:].strip() if everywhere else args
     if not needle:
         app.echo("Usage: /lastlog [-all] <text>", "error")
         return
@@ -102,7 +123,7 @@ async def c_lastlog(app, args):
             seen = {r.get("id") for r in recs}
             recs = [r for r in app.store.load(w.key, limit=5000) if r.get("id") not in seen] + recs
         for r in recs:
-            if r.get("k") in ("msg", "reply", "notice") and needle.lower() in (r.get("nick", "") + " " + r.get("text", "")).lower():
+            if r.get("k") in ("msg", "reply", "notice") and not r.get("echo") and needle.lower() in (r.get("nick", "") + " " + r.get("text", "")).lower():
                 hits.append((w, r))
     hits.sort(key=lambda wr: wr[1].get("t", 0))
     app.echo(f"lastlog: {len(hits)} match(es) for {needle!r}" + (" in all windows" if everywhere else ""))
@@ -172,18 +193,19 @@ async def c_hilight(app, args):
 @command("room", "chat", "/room <room> [password] [-save]", "Log into a room server and open its window; -save auto-logs in on connect")
 async def c_room(app, args):
     save = args.endswith(" -save")
-    c, pwd = app.split_target(args.removesuffix(" -save"))
+    c, pwd = app.split_target(args.removesuffix(" -save"), fallback=False)
     if not c or c["type"] != 3:
-        app.echo("Usage: /room <room server> [password] [-save] — see /contacts for rooms (type room)", "error")
+        app.echo(f"/room: {app.resolve_error + '. ' if app.resolve_error else ''}"
+                 "usage: /room <room server> [password] [-save] (see /contacts for rooms)", "error")
         return
     win = app.query_window(c)
     app.switch(app.windows.index(win))
     app.status(f"Logging into room {c['adv_name']}… it will send posts since your last visit.", win=win)
-    ev = await app.mc.commands.send_login_sync(c, pwd)
+    ev = await app.mesh_request(app.mc.commands.send_login_sync, c, pwd)
     if ev is not None and ev.type == EventType.LOGIN_SUCCESS:
         app.status(f"Logged into {c['adv_name']}. Anything you type here is posted to the room.", "ok", win=win)
         if save:
-            app.cfg["rooms"][c["adv_name"]] = pwd
+            app.cfg["rooms"][c["public_key"]] = pwd  # by key, so a look-alike name never gets the password
             app.cfg.save()
             app.status("Password saved to config.toml for auto-login.", "dim", win=win)
     else:

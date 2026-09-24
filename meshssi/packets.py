@@ -5,6 +5,8 @@ import time
 
 from rich.text import Text
 
+from .util import clean
+
 CONTACT_TYPES = {0: "?", 1: "chat", 2: "repeater", 3: "room", 4: "sensor"}
 
 
@@ -31,7 +33,7 @@ def summarize(p: dict, resolve_hash) -> dict:
     for k in ("adv_name", "adv_type", "adv_key", "adv_lat", "adv_lon", "chan_name", "chan_hash", "message",
               "sender_timestamp"):
         if k in p and p[k] is not None:
-            s[k] = p[k]
+            s[k] = clean(p[k]) if isinstance(p[k], str) and k in ("adv_name", "chan_name", "message") else p[k]
     return s
 
 

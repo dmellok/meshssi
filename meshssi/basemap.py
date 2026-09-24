@@ -24,9 +24,14 @@ RETRY_AFTER = 300  # seconds before retrying a tile that failed to download
 
 
 # ── Mapbox Vector Tile decoding (just enough of protobuf and the MVT spec) ──────────────────────────
+MAX_TILE_BYTES = 8 << 20  # refuse anything bigger, compressed or not
+
+
 def _varint(buf: bytes, i: int) -> tuple[int, int]:
     shift = result = 0
     while True:
+        if shift > 63:
+            raise ValueError("varint too long")
         b = buf[i]
         i += 1
         result |= (b & 0x7F) << shift
@@ -106,8 +111,7 @@ def _geometry(cmds: list[int]) -> list[list[tuple[int, int]]]:
 
 def decode_tile(data: bytes, want: set[str] | None = None) -> dict[str, list[dict]]:
     """Decode an MVT tile into {layer: [{"type", "props", "parts", "extent"}]}."""
-    if data[:2] == b"\x1f\x8b":
-        data = gzip.decompress(data)
+    data = _gunzip(data)
     layers: dict[str, list[dict]] = {}
     for field, _, layer_buf in _fields(data):
         if field != 3:
@@ -195,9 +199,23 @@ class View:
 # ── tile source: memory → disk cache → network (in the background) ───────────────────────────────
 def fetch_url(url: str, timeout: float = 10) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "gzip"})
+    if not url.startswith("https://"):
+        raise ValueError(f"only https tile sources are allowed, not {url[:40]!r}")
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = r.read()
-    return gzip.decompress(data) if data[:2] == b"\x1f\x8b" else data
+        data = r.read(MAX_TILE_BYTES + 1)
+    if len(data) > MAX_TILE_BYTES:
+        raise ValueError("tile too large")
+    return _gunzip(data)
+
+
+def _gunzip(data: bytes) -> bytes:
+    if data[:2] != b"\x1f\x8b":
+        return data
+    with gzip.GzipFile(fileobj=__import__("io").BytesIO(data)) as g:
+        out = g.read(MAX_TILE_BYTES + 1)
+    if len(out) > MAX_TILE_BYTES:
+        raise ValueError("tile decompresses too large")
+    return out
 
 
 def _fetch(url: str) -> bytes:
@@ -255,6 +273,8 @@ class TileSource:
             return self.template
         data = await asyncio.to_thread(_fetch, self.source)
         tj = json.loads(data)
+        if not str(tj["tiles"][0]).startswith("https://"):
+            raise ValueError("tile template must be https")
         meta.parent.mkdir(parents=True, exist_ok=True)
         meta.write_text(json.dumps(tj))
         self.template = tj["tiles"][0]
@@ -268,7 +288,7 @@ class TileSource:
             async with self._sem:
                 template = await self._resolve_template()
                 data = await asyncio.to_thread(_fetch, template.format(z=z, x=x, y=y))
-            tile = decode_tile(data, LAYERS)
+            tile = await asyncio.to_thread(decode_tile, data, LAYERS)
             path = self._disk(z, x, y)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
@@ -414,7 +434,9 @@ def draw(view: View, tiles: list[tuple[int, int, int, dict | None]], colors: dic
             cls, name = f["props"].get("class"), f["props"].get("name:latin") or f["props"].get("name")
             if name and cls in PLACE_RANK and f["parts"] and (PLACE_RANK[cls] <= 2 or z >= 13):
                 x, y = pt(f["parts"][0][0], f["extent"])
-                places.append((PLACE_RANK[cls], f["props"].get("rank", 99) or 99, name, x, y))
+                from .util import clean
+
+                places.append((PLACE_RANK[cls], f["props"].get("rank", 99) or 99, clean(name)[:40], x, y))
     w, h = view.dots
     seen = set()
     for _, _, name, x, y in sorted(places):  # tiles overlap, so the same place can come from several

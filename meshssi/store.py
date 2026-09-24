@@ -1,5 +1,6 @@
 """Scrollback and small state persisted under ~/.local/share/meshssi/<node>/."""
 
+import hashlib
 import json
 import os
 import re
@@ -9,16 +10,35 @@ DATA_ROOT = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share
 
 
 def _safe(key: str) -> str:
+    """A readable file name that's unique per window: '#vic' and '@vic', or two emoji-only names, must not
+    share a log (and case-insensitive filesystems must not merge '#Vic' and '#vic')."""
+    readable = re.sub(r"[^A-Za-z0-9_.-]", "_", key)[:40]
+    return f"{readable}-{hashlib.sha256(key.encode()).hexdigest()[:10]}"
+
+
+def _legacy(key: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", key)
 
 
 class Store:
     def __init__(self, node_key: str, root: Path = DATA_ROOT):
         self.dir = root / node_key[:12]
-        (self.dir / "logs").mkdir(parents=True, exist_ok=True)
+        (self.dir / "logs").mkdir(parents=True, exist_ok=True, mode=0o700)
+        for d in (root, self.dir, self.dir / "logs"):  # private messages live here
+            try:
+                os.chmod(d, 0o700)
+            except OSError:
+                pass
 
     def _log(self, win_key: str) -> Path:
-        return self.dir / "logs" / f"{_safe(win_key)}.jsonl"
+        path = self.dir / "logs" / f"{_safe(win_key)}.jsonl"
+        old = self.dir / "logs" / f"{_legacy(win_key)}.jsonl"
+        if not path.exists() and old.exists():  # logs from before names got a unique suffix
+            try:
+                old.rename(path)
+            except OSError:
+                return old
+        return path
 
     def append(self, win_key: str, rec: dict) -> None:
         with self._log(win_key).open("a", encoding="utf-8") as f:
@@ -53,4 +73,6 @@ class Store:
             return {}
 
     def save_state(self, state: dict) -> None:
-        (self.dir / "state.json").write_text(json.dumps(state, indent=2))
+        tmp = self.dir / "state.json.tmp"
+        tmp.write_text(json.dumps(state, indent=2))
+        os.replace(tmp, self.dir / "state.json")  # atomic: a reader never sees half a file

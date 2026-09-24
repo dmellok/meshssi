@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import re
 import time
 import urllib.request
@@ -11,7 +10,7 @@ from pathlib import Path
 from meshcore import EventType
 from rich.markup import escape
 
-from ..util import fmt_duration
+from ..util import fmt_duration, write_private
 from . import command
 
 
@@ -69,6 +68,9 @@ async def c_time(app, args):
 async def c_advert(app, args):
     if args.startswith("every"):
         val = args[5:].strip()
+        if val not in ("off", "0", "") and not (val.isdigit() and int(val) >= 5):
+            app.echo("Usage: /advert every <minutes, at least 5> or /advert every off", "error")
+            return
         minutes = 0 if val in ("off", "0", "") else int(val)
         app.cfg["device"]["advert_interval"] = minutes
         app.cfg.save()
@@ -84,6 +86,9 @@ async def c_nick(app, args):
     if not args:
         app.echo(f"You are {app.my_name}.")
         return
+    if len(args.encode()) > 31:
+        app.echo("Node names are limited to 31 bytes.", "error")
+        return
     await app.cmd(app.mc.commands.set_name(args))
     await app.cmd(app.mc.commands.send_appstart())
     app.status(f"You are now known as {args} (send /advert so others see it)", "ok")
@@ -92,8 +97,12 @@ async def c_nick(app, args):
 
 @command("txpower", "device", "/txpower <dBm>", "Set transmit power")
 async def c_txpower(app, args):
+    top = app.self_info.get("max_tx_power", 22)
     if not args.lstrip("-").isdigit():
-        app.echo(f"TX power is {app.self_info['tx_power']} dBm (max {app.self_info['max_tx_power']}).")
+        app.echo(f"TX power is {app.self_info['tx_power']} dBm (max {top}).")
+        return
+    if not 1 <= int(args) <= top:
+        app.echo(f"TX power must be between 1 and {top} dBm for this radio.", "error")
         return
     await app.cmd(app.mc.commands.set_tx_power(int(args)))
     await app.cmd(app.mc.commands.send_appstart())
@@ -116,7 +125,16 @@ async def c_radio(app, args):
         app.echo(f"Radio: {si['radio_freq']:.3f} MHz, BW {si['radio_bw']:g} kHz, SF{si['radio_sf']}, CR{si['radio_cr']}. "
                  "Usage: /radio 916.575 62.5 7 8  or  /radio preset <name>")
         return
-    freq, bw, sf, cr = float(p[0]), float(p[1]), int(p[2]), int(p[3])
+    try:
+        freq, bw, sf, cr = float(p[0]), float(p[1]), int(p[2]), int(p[3])
+    except ValueError:
+        app.echo("Usage: /radio <MHz> <bw kHz> <sf> <cr>, e.g. /radio 916.575 62.5 7 8", "error")
+        return
+    if not (137 <= freq <= 1020 and bw in (7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125.0, 250.0, 500.0)
+            and 5 <= sf <= 12 and 5 <= cr <= 8):
+        app.echo("Out of range: MHz 137-1020, BW one of 7.8/10.4/15.6/20.8/31.25/41.7/62.5/125/250/500, "
+                 "SF 5-12, CR 5-8.", "error")
+        return
     if not app.confirm(f"radio {freq} {bw} {sf} {cr} — a mismatch takes you off the mesh"):
         return
     await app.cmd(app.mc.commands.set_radio(freq, bw, sf, cr))
@@ -127,26 +145,38 @@ async def c_radio(app, args):
 async def c_coords(app, args):
     p = args.replace(",", " ").split()
     if p[:1] == ["share"] and len(p) == 2:
-        await app.cmd(app.mc.commands.set_advert_loc_policy(1 if p[1] == "on" else 0))
+        share = app.on_off(p[1])
+        if share is None:
+            return
+        await app.cmd(app.mc.commands.set_advert_loc_policy(1 if share else 0))
         await app.cmd(app.mc.commands.send_appstart())
         app.echo(f"Adverts {'include' if p[1] == 'on' else 'no longer include'} your location.", "ok")
         return
-    if len(p) != 2:
-        app.echo("Usage: /coords -33.8688 151.2093", "error")
+    try:
+        lat, lon = float(p[0]), float(p[1])
+        assert len(p) == 2 and -90 <= lat <= 90 and -180 <= lon <= 180
+    except (ValueError, AssertionError, IndexError):
+        app.echo("Usage: /coords <lat -90..90> <lon -180..180>, e.g. /coords -33.8688 151.2093", "error")
         return
-    await app.cmd(app.mc.commands.set_coords(float(p[0]), float(p[1])))
+    await app.cmd(app.mc.commands.set_coords(lat, lon))
     await app.cmd(app.mc.commands.send_appstart())
     app.echo("Location saved.", "ok")
 
 
 async def set_device(app, key: str, val: str) -> None:
     c = app.mc.commands
-    on = val.lower() in ("on", "1", "yes", "true")
     if not val:
         app.echo("Device settings: manualadd on|off · multiacks 0|1|2 · locpolicy 0|1 · pathhash 0|1|2 · "
                  "autoadd <bitmask> · telemetry base|loc|env 0|1|2", "error")
         return
+    ranges = {"multiacks": (0, 2), "locpolicy": (0, 1), "pathhash": (0, 2)}
+    if key in ranges and not (val.isdigit() and ranges[key][0] <= int(val) <= ranges[key][1]):
+        app.echo(f"{key} must be {ranges[key][0]}-{ranges[key][1]}.", "error")
+        return
     if key == "manualadd":
+        on = app.on_off(val)
+        if on is None:
+            return
         await app.cmd(c.set_manual_add_contacts(on))
     elif key == "multiacks":
         await app.cmd(c.set_multi_acks(int(val)))
@@ -159,7 +189,7 @@ async def set_device(app, key: str, val: str) -> None:
     elif key == "telemetry":
         which, _, mode = val.partition(" ")
         fn = {"base": c.set_telemetry_mode_base, "loc": c.set_telemetry_mode_loc, "env": c.set_telemetry_mode_env}.get(which)
-        if not fn or not mode.isdigit():
+        if not fn or mode not in ("0", "1", "2"):
             app.echo("Usage: /set telemetry base|loc|env 0|1|2 (0 deny, 1 contacts with permission, 2 everyone)", "error")
             return
         await app.cmd(fn(int(mode)))
@@ -190,8 +220,8 @@ async def c_vars(app, args):
 
 @command("pin", "device", "/pin <6 digits|0>", "Set the Bluetooth pairing PIN (0 = random each boot)")
 async def c_pin(app, args):
-    if not args.isdigit():
-        app.echo("Usage: /pin 123456", "error")
+    if args != "0" and not (len(args) == 6 and args.isdigit() and args[0] != "0"):
+        app.echo("Usage: /pin <6 digits, not starting with 0>, or /pin 0 for a random PIN each boot", "error")
         return
     await app.cmd(app.mc.commands.set_devicepin(int(args)))
     app.echo("BLE PIN saved (takes effect after reboot).", "ok")
@@ -238,10 +268,13 @@ async def c_keybackup(app, args):
         app.echo(f"Export failed: {ev.payload}", "error")
         return
     path = Path(args).expanduser()
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump({"name": app.my_name, "public_key": app.self_info["public_key"],
-                   "private_key": ev.payload["private_key"].hex(), "exported": time.strftime("%Y-%m-%d %H:%M:%S")}, f, indent=2)
+    try:
+        write_private(path, json.dumps({"name": app.my_name, "public_key": app.self_info["public_key"],
+                                        "private_key": ev.payload["private_key"].hex(),
+                                        "exported": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
+    except FileExistsError:
+        app.echo(f"{path} already exists; choose a new file name (an old backup may be the only copy).", "error")
+        return
     app.echo(f"Identity saved to {path} (mode 600). Anyone with this file can impersonate your node.", "ok")
 
 

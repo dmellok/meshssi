@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased
+
+### Fixed (from a code audit prompted by a reader's report about /setperm)
+- **Wrong recipients:** commands that send or change things no longer guess between similar names.
+  - Two contacts sharing a name, or a typo in a longer name ("Pat Smiht"), is refused with a list of candidates instead of picking one. Mid-word matches ("ora" → "Nora") are gone.
+  - `"quotes"` pick a name exactly.
+  - `/msg Public Works …` asks whether you meant the channel or the contact.
+- **Passwords:**
+  - `/login` never sends a password to the open DM window after a typo, and only logs into repeaters, rooms and sensors.
+  - Saved room passwords are pinned to the room's key and only sent to that room server, not to any node that advertises a similar name.
+  - `/rcmd password …` isn't kept in scrollback. In a repeater's window, `/rcmd` sends the whole line to that repeater.
+- **Terminal safety:** control characters (escape sequences, OSC, line breaks) in node names and messages are stripped. A remote node can no longer change your terminal title, clear the screen, write your clipboard, or fake chat lines.
+- **Config:** a config file that can't be parsed is never overwritten with defaults.
+  - Names like "Café" or "ルーム" no longer produce unreadable files. Writes are atomic and the file is private (0600).
+  - `/set` masks room passwords and the BLE PIN.
+  - List settings stay text, so `/set chat.highlights [1, 2]` no longer breaks message handling.
+- **Private files:**
+  - `/export` and `/keybackup` refuse to overwrite files and create them private.
+  - Scrollback and state directories are 0700.
+  - Log files get unique names, so `#vic` and `@vic`, or two emoji-only channel names, no longer share history.
+- **Confirmations and validation:**
+  - `/part` asks first (with a warning for private channels), as do `/setperm` and `/accept` of several contacts.
+  - `/join #name <key>` explains that hashtag channels ignore keys.
+  - Checked before sending: `/pin` (6 digits), `/txpower` (up to the radio's max), `/coords` ranges, `/radio` ranges, on/off values, `/advert every` (at least 5 minutes), device setting ranges, and name lengths.
+- **Radio I/O:**
+  - Repeater requests (status, login, neighbours…) no longer take a DM's send confirmation, which used to make delivered DMs retry and show ✗.
+  - Automatic reconnects now resync, and are what triggers the "another client is using the radio" warning.
+  - Late acks turn ✗ into ✓.
+  - An error on one chunk of a long DM fails the rest instead of leaving them pending.
+  - Background errors are reported instead of closing the app.
+- **Windows:** reloading channels (on reconnect, `/join`, or a channel changed elsewhere) keeps you on the window you're looking at. A renamed slot no longer leaves a stale window that `/part` would use to delete the wrong channel.
+- **Daemon (`--serve`):**
+  - Long contact lists no longer cause replies to reach the wrong client.
+  - A replaced radio connection can't tear down the new one.
+  - The daemon's own app start is always sent first.
+  - Apps that all call themselves "mccli" (meshcore_py, including Home Assistant) get separate message cursors, per host.
+  - Oversized frames and stalled clients are dropped.
+- **Smaller fixes:**
+  - An alias wrapping its own command (`/alias msg /msg #x`) works, and alias loops are reported.
+  - `/lastlog` doesn't find its own output.
+  - Long messages never produce empty chunks or split emoji sequences, and never hang.
+  - Wrapped lines indent exactly under the message.
+  - `/trace <name>` prefers contacts over hex-looking hashes.
+  - Map tiles are size-limited, decoded off the UI thread, and only fetched over https.
+  - Notifications work with emoji and accented text (and can't be used to inject script).
+
 ## 0.3.0
 
 ### New

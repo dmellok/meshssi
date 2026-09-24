@@ -96,19 +96,21 @@ async def c_set(app, args):
         for section, values in app.cfg.data.items():
             app.echo(f"[{section}]", "dim")
             for k, v in values.items():
-                shown = "***" if section == "rooms" else v
-                app.echo(f"  {section}.{k} = {shown!r}")
+                shown = "***" if section == "rooms" or (section, k) == ("connection", "ble_pin") and v else v
+                label = app.name_for(k) or k if section == "rooms" else k
+                app.echo(f"  {section}.{label} = {shown!r}")
         app.echo(f"Device settings (on the radio): {', '.join(DEVICE_SETTINGS)} — see /set <name>. File: {app.cfg.path}")
         return
+    secret = key.startswith("rooms.") or key == "connection.ble_pin"
     if not val:
-        app.echo(f"{key} = {app.cfg.get(key)!r}")
+        app.echo(f"{key} = {'***' if secret and app.cfg.get(key) else repr(app.cfg.get(key))}")
         return
     if val == "-default":
         app.cfg.unset(key)
         app.echo(f"{key} reset to {app.cfg.get(key)!r}", "ok")
     else:
         value = app.cfg.set(key, val)
-        app.echo(f"{key} = {value!r}", "ok")
+        app.echo(f"{key} = {'***' if secret else repr(value)}", "ok")
     apply_setting(app, key)
 
 

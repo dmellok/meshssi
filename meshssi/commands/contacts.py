@@ -7,7 +7,7 @@ from pathlib import Path
 from rich.markup import escape
 
 from .. import geo
-from ..util import ago, name_forms
+from ..util import ago, name_forms, write_private
 from . import command
 
 TYPES = {0: "?", 1: "chat", 2: "repeater", 3: "room", 4: "sensor"}
@@ -76,10 +76,16 @@ async def c_pending(app, args):
 @command("accept", "contacts", "/accept <name|key-prefix|all>", "Add a pending node to the radio's contacts", aliases=("add",))
 async def c_accept(app, args):
     pend = list(app.mc.pending_contacts.values())
-    q = args.lower()
-    picks = pend if q == "all" else [c for c in pend if c["adv_name"].lower().startswith(q) or c["public_key"].startswith(q)]
+    q = args.strip().lower()
+    if not q:
+        app.echo("Usage: /accept <name|key-prefix|all>. See /pending.", "error")
+        return
+    exact = [c for c in pend if q == c["adv_name"].lower() or q in name_forms(c["adv_name"])]
+    picks = pend if q == "all" else exact or [c for c in pend if c["adv_name"].lower().startswith(q) or c["public_key"].startswith(q)]
     if not picks:
         app.echo("No matching pending contact. See /pending.", "error")
+        return
+    if len(picks) > 1 and not app.confirm(f"add {len(picks)} contacts: " + ", ".join(c["adv_name"] for c in picks[:8])):
         return
     for c in picks:
         await app.cmd(app.mc.commands.add_contact(c))
@@ -125,7 +131,7 @@ async def c_path(app, args):
         return
     app.echo(f"Discovering path to {c['adv_name']}…")
     t0 = time.time()
-    ev = await app.mc.commands.send_path_discovery_sync(c)
+    ev = await app.mesh_request(app.mc.commands.send_path_discovery_sync, c)
     if not ev:
         app.echo("No response.", "error")
         return
@@ -231,10 +237,14 @@ async def c_export(app, args):
     for idx, ch in sorted(app.channels.items()):
         out["channels"].append({"slot": idx, "name": ch["channel_name"], "secret": ch["channel_secret"].hex()})
     path = Path(args).expanduser()
-    path.write_text(json.dumps(out, indent=2, ensure_ascii=False))
-    path.chmod(0o600)
+    try:
+        write_private(path, json.dumps(out, indent=2, ensure_ascii=False))
+    except FileExistsError:
+        app.echo(f"{path} already exists; choose a new file name.", "error")
+        return
+    skipped = len(app.mc.contacts) - len(out["contacts"])
     app.echo(f"Exported {len(out['contacts'])} contacts and {len(out['channels'])} channels to {path} "
-             "(contains channel keys — keep it private).", "ok")
+             "(contains channel keys — keep it private)." + (f" {skipped} contact(s) couldn't be exported." if skipped else ""), "ok")
 
 
 @command("autoadd", "contacts", "/autoadd [on|off]", "Whether new nodes are added automatically (off = /pending + /accept)")

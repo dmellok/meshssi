@@ -28,11 +28,16 @@ class CommandsMixin:
     async def run_command(self, line: str, depth: int = 0) -> None:
         name, _, args = line.partition(" ")
         name = name.lower()
-        user_alias = self.cfg["aliases"].get(name)
-        if user_alias and depth < 5:
+        user_alias = self.cfg["aliases"].get(name) if depth >= 0 else None
+        if user_alias:
+            if depth >= 5:
+                self.echo(f"Alias loop: /{name} keeps expanding to other aliases.", "error")
+                return
             body = user_alias.lstrip("/")
             expanded = body.replace("$*", args) if "$*" in body else body + (" " + args if args else "")
-            await self.run_command(expanded, depth + 1)
+            # an alias that wraps the command of the same name ("/alias msg /msg #x") calls the built-in
+            inner = expanded.split(" ", 1)[0].lower()
+            await self.run_command(expanded, -1 if inner == name else depth + 1)
             return
         name = ALIASES.get(name, name)
         if name not in COMMANDS:
@@ -47,16 +52,33 @@ class CommandsMixin:
         except Exception as e:  # noqa: BLE001
             self.echo(f"/{name} failed: {type(e).__name__}: {e}", "error")
 
-    def need_contact(self, query: str) -> dict | None:
+    def need_contact(self, query: str, types: tuple[int, ...] | None = None) -> dict | None:
+        """Resolve a node for a command, strictly (see match_contacts), optionally requiring certain types."""
         if not query:
             if self.win.kind == "query" and (c := self.contact(self.win.pubkey)):
-                return c
+                return c if not types or c["type"] in types else self._wrong_type(c, types)
             self.echo("Which contact? (tab completes names)", "error")
             return None
         c = self.find_contact(query)
         if not c:
-            self.echo(f"No unique contact matches {query!r}. See /contacts.", "error")
-        return c
+            self.echo(f"{self.resolve_error or 'no match'}. See /contacts.", "error")
+            return None
+        return c if not types or c["type"] in types else self._wrong_type(c, types)
+
+    def _wrong_type(self, c: dict, types: tuple[int, ...]):
+        names = {1: "chat node", 2: "repeater", 3: "room server", 4: "sensor"}
+        self.echo(f"{c['adv_name']} is a {names.get(c['type'], 'node')}; this needs a "
+                  f"{' or '.join(names[t] for t in types)}.", "error")
+        return None
+
+    def on_off(self, value: str) -> bool | None:
+        v = value.strip().lower()
+        if v in ("on", "yes", "true", "1"):
+            return True
+        if v in ("off", "no", "false", "0"):
+            return False
+        self.echo(f"Expected on or off, got {value!r}.", "error")
+        return None
 
     def need_channel(self, name: str):
         win = self.win if not name else next(

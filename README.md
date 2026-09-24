@@ -221,6 +221,8 @@ A MeshCore WiFi companion serves **one client at a time**: when a phone app, Hom
 ./meshssi.sh --serve --listen 0.0.0.0:5001 192.168.1.50   # let other machines (e.g. Home Assistant) connect too
 ```
 
+**Anyone who can connect to the daemon's port has full control of your radio**, including exporting its private key, because the companion protocol has no login. Keep the default `127.0.0.1`, and only use `0.0.0.0` on a network you trust.
+
 Requests are serialised, and each reply goes back to the client that asked. Pushes (adverts, packet log, acks) go to everyone. The daemon fetches incoming messages itself and keeps them in a shared log, and each client reads its own copy, so no client steals another's messages. A client that reconnects under the same app name resumes where it left off, including messages that arrived while it was away. Serial and Bluetooth radios work as the upstream too.
 
 To keep it running on macOS, run it in `tmux`/`screen`, or as a LaunchAgent that runs `/path/to/meshssi/meshssi.sh --serve <radio>` with `KeepAlive` set to true.

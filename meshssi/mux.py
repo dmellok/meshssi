@@ -24,7 +24,10 @@ RESP_NO_MORE_MSGS = 0x0A
 PUSH_MSG_WAITING = 0x83
 MESSAGE_CODES = {0x07, 0x08, 0x10, 0x11, 0x1B}  # contact/channel msg (v2, v3), channel data
 QUEUE_LIMIT = 1000
-REPLY_TIMEOUT = 10.0
+REPLY_TIMEOUT = 10.0  # for a reply to start; a contacts stream only needs to keep moving (per frame)
+MAX_FRAME = 300
+MAX_CLIENT_BUFFER = 1 << 20  # a client this far behind is dropped rather than buffered without limit
+RESP_CONTACT_START, RESP_CONTACT = 0x02, 0x03
 
 
 def frame_out(data: bytes) -> bytes:
@@ -41,8 +44,13 @@ class Client:
         self.peer = f"{peer[0]}:{peer[1]}" if peer else "?"
 
     def send(self, data: bytes) -> None:
-        if not self.writer.is_closing():
-            self.writer.write(frame_out(data))
+        if self.writer.is_closing():
+            return
+        if self.writer.transport.get_write_buffer_size() > MAX_CLIENT_BUFFER:
+            log.warning("client %s (%s) isn't reading; disconnecting it", self.peer, self.app)
+            self.writer.close()
+            return
+        self.writer.write(frame_out(data))
 
     async def run(self) -> None:
         buf = b""
@@ -58,6 +66,9 @@ class Client:
                     if len(buf) < 3:
                         break
                     size = int.from_bytes(buf[1:3], "little")
+                    if size > MAX_FRAME:  # not a real frame: resync on the next start byte
+                        buf = buf[1:]
+                        continue
                     if len(buf) < 3 + size:
                         break
                     frame, buf = buf[3 : 3 + size], buf[3 + size :]
@@ -82,8 +93,10 @@ class Mux:
         self.requests: asyncio.Queue = asyncio.Queue()  # (client | None, frame, future | None)
         self.current: tuple[Client | None, int] | None = None  # who gets the next reply, and their command
         self.reply_done: asyncio.Event = asyncio.Event()
+        self.contact_progress: asyncio.Event = asyncio.Event()
         self.upstream_up = asyncio.Event()
         self.fetching = False
+        self.fetch_again = False
         self.last_code: int | None = None
         self.stats = collections.Counter()
 
@@ -95,6 +108,7 @@ class Mux:
         self.stats["rx_frames"] += 1
         if code >= 0x80:
             if code == PUSH_MSG_WAITING and self.fetch_messages:
+                self.fetch_again = True  # also covers a push that lands while a fetch is finishing
                 self.start_fetch()
                 return
             for c in list(self.clients):
@@ -104,6 +118,11 @@ class Mux:
             log.debug("unsolicited reply 0x%02x dropped", code)
             return
         client, cmd = self.current
+        if cmd == CMD_GET_CONTACTS and code in (RESP_CONTACT_START, RESP_CONTACT):
+            self.contact_progress.set()  # streaming: keep the per-frame timeout alive
+        elif cmd != CMD_GET_CONTACTS and code in (RESP_CONTACT_START, RESP_CONTACT, RESP_CONTACT_END):
+            log.debug("late contacts frame 0x%02x dropped", code)  # left over from a timed-out stream
+            return
         self.last_code = code
         if client is None:  # the daemon's own requests (app start, message fetch)
             if code in MESSAGE_CODES:
@@ -115,24 +134,43 @@ class Mux:
             return  # contacts stream as START, CONTACT…, END
         self.reply_done.set()
 
-    async def on_upstream_lost(self, reason: str) -> None:
-        log.warning("radio connection lost (%s)", reason)
-        self.upstream_up.clear()
-        self.reply_done.set()
+    def _lost_callback(self, transport):
+        async def lost(reason: str) -> None:
+            if transport is not self.transport:  # an old connection we've already replaced
+                return
+            log.warning("radio connection lost (%s)", reason)
+            self.upstream_up.clear()
+            self.reply_done.set()
+
+        return lost
 
     async def keep_upstream(self) -> None:
         delay = 2
         while True:
             if not self.upstream_up.is_set():
                 try:
-                    self.transport = self.make_transport()
-                    self.transport.set_reader(self)
-                    self.transport.set_disconnect_callback(self.on_upstream_lost)
-                    await self.transport.connect()
+                    old, self.transport = self.transport, None
+                    if old is not None:
+                        try:
+                            await asyncio.wait_for(old.disconnect(), 3)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    transport = self.make_transport()
+                    transport.set_reader(self)
+                    transport.set_disconnect_callback(self._lost_callback(transport))
+                    self.transport = transport
+                    await transport.connect()
+                    # APP_START goes first, before any queued client request (firmware expects it)
+                    self.current = (None, CMD_APP_START)
+                    self.reply_done.clear()
+                    await transport.send(bytes([CMD_APP_START, 3]) + b"\0" * 6 + b"meshssi-mux")
+                    try:
+                        await asyncio.wait_for(self.reply_done.wait(), REPLY_TIMEOUT)
+                    finally:
+                        self.current = None
                     self.upstream_up.set()
                     delay = 2
                     log.info("connected to radio")
-                    await self.requests.put((None, bytes([CMD_APP_START, 3]) + b"\0" * 6 + b"meshssi-mux", None))
                     self.start_fetch()
                 except Exception as e:  # noqa: BLE001
                     log.warning("radio connect failed: %s; retrying in %ss", e, delay)
@@ -153,7 +191,19 @@ class Mux:
             self.reply_done.clear()
             try:
                 await self.transport.send(frame)
-                await asyncio.wait_for(self.reply_done.wait(), REPLY_TIMEOUT)
+                if frame[0] == CMD_GET_CONTACTS:
+                    while not self.reply_done.is_set():
+                        self.contact_progress.clear()
+                        done = asyncio.ensure_future(self.reply_done.wait())
+                        more = asyncio.ensure_future(self.contact_progress.wait())
+                        finished, pending = await asyncio.wait({done, more}, timeout=REPLY_TIMEOUT,
+                                                               return_when=asyncio.FIRST_COMPLETED)
+                        for f in pending:
+                            f.cancel()
+                        if not finished:
+                            raise asyncio.TimeoutError
+                else:
+                    await asyncio.wait_for(self.reply_done.wait(), REPLY_TIMEOUT)
             except asyncio.TimeoutError:
                 log.debug("no reply to 0x%02x", frame[0])
             except Exception as e:  # noqa: BLE001
@@ -172,9 +222,13 @@ class Mux:
     async def _fetch_loop(self) -> None:
         try:
             while True:
-                fut = asyncio.get_running_loop().create_future()
-                await self.requests.put((None, bytes([CMD_SYNC_NEXT_MESSAGE]), fut))
-                if await fut not in MESSAGE_CODES:
+                self.fetch_again = False
+                while True:
+                    fut = asyncio.get_running_loop().create_future()
+                    await self.requests.put((None, bytes([CMD_SYNC_NEXT_MESSAGE]), fut))
+                    if await fut not in MESSAGE_CODES:
+                        break
+                if not self.fetch_again:
                     break
         finally:
             self.fetching = False
@@ -201,7 +255,9 @@ class Mux:
     async def from_client(self, client: Client, frame: bytes) -> None:
         cmd = frame[0]
         if cmd == CMD_APP_START:
-            client.app = frame[8:].decode("utf-8", "ignore").strip("\0") or "unknown"
+            name = frame[8:].decode("utf-8", "ignore").strip("\0 ") or "unknown"
+            # meshcore_py sends "mccli" for every app (meshssi, Home Assistant...), so tell those apart by host
+            client.app = f"{name}@{client.peer.rsplit(':', 1)[0]}" if name == "mccli" else name
             # a returning app resumes where it left off; a new one gets everything still buffered
             client.cursor = self.app_cursor.get(client.app, 0)
             log.info("%s identified as %r (%d unread messages)", client.peer, client.app, self.pending(client))

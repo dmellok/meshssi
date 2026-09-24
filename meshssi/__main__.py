@@ -57,8 +57,10 @@ def main() -> None:
     if not args.target:
         ap.error("no target given, e.g. `meshssi 192.168.1.50`, `meshssi /dev/cu.usbmodem1101`, `meshssi ble:<addr>` "
                  "(or `meshssi --demo` / `meshssi --scan`)")
+    if cfg.error:
+        print(f"meshssi: {cfg.error}")
     cfg["connection"]["target"] = args.target
-    cfg.save()
+    cfg.save()  # does nothing if the file couldn't be parsed
 
     if args.serve:
         from .mux import run_daemon
