@@ -159,10 +159,23 @@ _CONTROL = {c: None for c in list(range(0x00, 0x20)) + [0x7F] + list(range(0x80,
 _CONTROL.update({0x09: " ", 0x0A: " ", 0x0D: " "})
 
 
+# Characters whose on-screen width terminals and Rich disagree about. Left in, they shift the rest of the
+# row and leave stale cells behind (a misaligned sidebar, stray blocks). Dropped for display:
+_INVISIBLE = {c: None for c in (
+    [0x00AD, 0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x180E, 0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x2060,
+     0x2061, 0x2062, 0x2063, 0x2064, 0x3164, 0xFE0E, 0xFE0F, 0xFEFF, 0xFFA0, 0x20E3]  # joiners, selectors, fillers
+    + list(range(0x202A, 0x202F)) + list(range(0x2066, 0x206A))  # bidi controls
+    + list(range(0x1F3FB, 0x1F400))  # skin-tone modifiers
+    + list(range(0xE0000, 0xE0080))  # tag characters (subdivision flags)
+)}
+_INVISIBLE.update({c: chr(c - 0x1F1E6 + ord("A")) for c in range(0x1F1E6, 0x1F200)})  # flag letters -> "AU"
+
+
 def clean(text) -> str:
-    """Make text from the mesh safe to display: drop terminal control characters (ESC, OSC, C1...) and
-    turn line breaks into spaces, so a remote node can't inject escape sequences or fake extra lines."""
-    return str(text).translate(_CONTROL) if text is not None else ""
+    """Make text from the mesh safe and predictable to display: drop terminal control characters (ESC, OSC,
+    C1...), turn line breaks into spaces, and drop the invisible joiners/selectors that make emoji render at a
+    different width than they're measured (flags become their two letters, 👍🏽 becomes 👍)."""
+    return str(text).translate(_CONTROL).translate(_INVISIBLE) if text is not None else ""
 
 
 def write_private(path, text: str) -> None:

@@ -639,7 +639,7 @@ class MeshssiApp(CommandsMixin, App):
         if w.kind == "channel":
             out.append(f"heard in {w.name}\n", "bold underline")
             for nick, ts in sorted(w.speakers.items(), key=lambda kv: -kv[1]):
-                out.append(nick, self.nick_color(nick)).append(f"  {ago(ts).replace(' ago', '')}\n", dim)
+                out.append(clean(nick), self.nick_color(nick)).append(f"  {ago(ts).replace(' ago', '')}\n", dim)
         elif w.kind == "query" and (c := self.contact(w.pubkey)):
             out.append(f"{c['adv_name']}\n", "bold underline")
             out.append(f"type   {CONTACT_TYPES.get(c['type'])}\n")
