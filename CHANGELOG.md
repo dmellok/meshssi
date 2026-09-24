@@ -27,6 +27,9 @@
 - Hop counts are a column before the nick (` 2»`, green ` 0»` for direct) instead of a tag at the end of each message. SNR is hidden unless you turn on `ui.show_snr`, and `ui.show_hops` turns the column off.
 - Long lines wrap with a hanging indent under the message, as irssi does, instead of running back under the timestamp.
 
+### Fixed
+- Misaligned rows and stray blocks when names or messages contain emoji joiners, variation selectors, skin tones, flags or zero-width characters. Terminals and Rich measured these differently; they're now normalised for display.
+
 ### Fixed (from a code audit prompted by a reader's report about /setperm)
 - `/setperm` asks for confirmation, naming the node, the user's name and key, and the level. It only accepts an exact contact name or a full key; a prefix is accepted only when removing someone, matching the firmware.
 - **Wrong recipients:** commands that send or change things no longer guess between similar names.

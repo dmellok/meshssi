@@ -72,6 +72,13 @@ Channel messages you send show **heard ×N** as repeaters relay them back to you
 
 **Plugins.** Drop Python files into `~/.config/meshssi/plugins/` to add bots, bridges and commands (see [Plugins](#plugins)).
 
+## Mouse and hints
+
+- **Click any name** (in the chat, the sidebar, or the contact list) for a card with that node's details and actions: message, whois, trace, route; log in, status and neighbours for repeaters; and so on.
+- **Click a hop count** (`2»`) to see the route by name and trace it.
+- **Type `/`** for matching commands with their arguments. Once you've picked one, it suggests contacts to click. **F1** searches every command.
+- **`/layout easy`** adds a clickable window list, a toolbar and a key-hint bar. **F3** shows the window list in either layout.
+
 ## Keys
 
 | Key | Action |
@@ -82,7 +89,9 @@ Channel messages you send show **heard ×N** as repeaters relay them back to you
 | tab | complete; press again to cycle |
 | ↑ / ↓ | input history (or move between lines when a long message wraps) |
 | PgUp / PgDn | scroll |
+| F1 | command palette: search every command |
 | F2 | toggle the nicklist |
+| F3 | toggle the window list |
 
 In the status bar, `Act:` lists windows with unread activity: grey for events, white for messages, magenta for DMs and mentions. A line starting with `//` sends a message that begins with `/`.
 
