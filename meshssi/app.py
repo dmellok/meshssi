@@ -564,11 +564,14 @@ class MeshssiApp(CommandsMixin, App):
             self.split_win = None
             return
         log2 = self.query_one("#log2", RichLog)
+        if log2.scrollable_content_region.width < 20:  # not laid out yet: try again once it has a width
+            self.set_timer(0.05, self._fill_split)
+            return
         log2.clear()
-        width = max(10, log2.scrollable_content_region.width)
+        width = log2.scrollable_content_region.width
         label = f" {self.split_win.name} · window {self.windows.index(self.split_win) + 1} "
         side = "─" * max(2, (width - cell_len(label)) // 2)
-        log2.write(Text(f"{side}{label}{side}", self.st["notice"]), width=width)
+        log2.write(Text(f"{side}{label}{side}", self.st["notice"], no_wrap=True, overflow="crop"), width=width)
         for rec in self.split_win.recs[-300:]:
             self._write(rec, "#log2")
         log2.scroll_end(animate=False)

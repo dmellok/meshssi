@@ -2,15 +2,19 @@
 
 An irssi-style terminal client for [MeshCore](https://github.com/meshcore-dev/MeshCore) companion radios. Use it to chat on channels and in DMs, watch every packet your radio hears, map the mesh, trace routes hop by hop, and administer your radio and repeaters, all from the keyboard.
 
-![Channel window: nicklist, hop/SNR tags, heard-by counts, a highlighted mention and the unread marker](docs/channel.png)
+![A channel with a DM split above it: hop counts, heard-by counts, delivery ticks, a flood retry, a highlighted mention and the unread marker](docs/channel.png)
 
-| Live packet monitor | Mesh map | Signal graphs |
+| Click a name for actions | Command hints as you type | Easy layout |
 |---|---|---|
-| ![Packet monitor](docs/rf.png) | ![Map](docs/map.png) | ![Graphs](docs/graphs.png) |
+| ![Node card](docs/card.png) | ![Hints](docs/hints.png) | ![Easy layout](docs/easy.png) |
+| **Click a hop count to trace the route** | **Long messages wrap, with a byte counter** | **F1 command palette** |
+| ![Trace](docs/trace.png) | ![Compose](docs/compose.png) | ![Palette](docs/palette.png) |
+| **Map over OpenStreetMap** | **Live packet monitor** | **Signal graphs** |
+| ![Map](docs/map.png) | ![Packet monitor](docs/rf.png) | ![Graphs](docs/graphs.png) |
 | **DMs with retries and delivery acks** | **Repeater admin** | **Repeater dashboard** |
 | ![DM window](docs/dm.png) | ![Repeater window](docs/repeater.png) | ![Dashboard](docs/dash.png) |
 
-<sub>Screenshots are from `meshssi --demo`, a simulated mesh with made-up nodes. `scripts/screenshots.py` regenerates them.</sub>
+<sub>Screenshots are from `meshssi --demo`, a simulated mesh with made-up nodes, in the rose-pine theme. `scripts/screenshots.py` regenerates them.</sub>
 
 ## Install
 
