@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 from meshcore import EventType, MeshCore
 from rich.cells import cell_len
+from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -377,7 +378,9 @@ class MeshssiApp(CommandsMixin, App):
                     line.append("    ")
                 else:
                     h = 0 if h == 255 else h  # 255 = sent direct along a stored route
-                    line.append(f"{h:>2}» ", t["meta"] if h else t["good"])
+                    click = Style.from_meta({"@click": f"app.hops('{rec.get('id', '')}')"})  # click: route + trace
+                    line.append(f"{h:>2}»", Style.parse(t["meta"] if h else t["good"]) + click)
+                    line.append(" ")
             if rec.get("own"):
                 line.append("<", t["timestamp"]).append(nick, t["own_nick"]).append("> ", t["timestamp"])
             elif rec.get("hl"):
@@ -665,6 +668,44 @@ class MeshssiApp(CommandsMixin, App):
                     out.append(TYPE_GLYPH.get(h.get("type"), "?") + " ", dim)
                     out.append(h["name"], dim).append(f"  {ago(h.get('last')).replace(' ago', '')}\n", dim)
         self.query_one("#nicklist", Static).update(out)
+
+    def route_names(self, hashes: list[str]) -> str:
+        return " → ".join(self.resolve_hash(h) or h for h in hashes)
+
+    async def action_hops(self, rec_id: str) -> None:
+        """Clicked a hop count: show the route that message took, by repeater name, then trace it."""
+        rec = next((r for w in (self.win, self.split_win) if w for r in w.recs if r.get("id") == rec_id), None)
+        if rec is None:
+            return
+        nick, hops = rec.get("nick", "?"), rec.get("hops")
+        hops = 0 if hops == 255 else hops
+        if self.win.kind == "query":  # DMs carry a hop count but not the route: use the one we store for them
+            c = self.contact(self.win.pubkey)
+            if not c:
+                return
+            n = c.get("out_path_len", -1)
+            if n < 0 or n == 255:
+                self.echo(f"No stored route to {c['adv_name']}: messages to them flood. /path {c['adv_name']} finds one.")
+                return
+            width = (c.get("out_path_hash_mode", 0) + 1) * 2
+            out = [c["out_path"][i : i + width] for i in range(0, len(c.get("out_path", "")), width)]
+            self.echo(f"Your route to {c['adv_name']}: {self.route_names(['you'] + out + [c['adv_name']]) if out else 'direct, no repeaters'}"
+                      + f"  (their message came {hops} hop{'s' if hops != 1 else ''})")
+            if out:
+                await self.run_command("trace " + ",".join(out + out[-2::-1]))
+            return
+        route = rec.get("route")
+        if not hops:
+            self.echo(f"{nick}'s message was heard directly: no repeaters in between.")
+            return
+        if not route:
+            self.echo(f"{nick}'s message came {hops} hop{'s' if hops != 1 else ''}, but the radio didn't report "
+                      "which repeaters (it only does for packets it logs).")
+            return
+        self.echo(f"{nick}'s message came {len(route)} hop{'s' if len(route) != 1 else ''}: "
+                  f"{nick} → {self.route_names(route)} → you")
+        back = list(reversed(route))  # trace from us out to the repeater nearest them, and back
+        await self.run_command("trace " + ",".join(back + back[-2::-1]))
 
     def map_key(self, key: str) -> None:
         """Pan and zoom the map from the keyboard (only while the map is showing and the input is empty)."""
@@ -1244,13 +1285,14 @@ class MeshssiApp(CommandsMixin, App):
             return
         hl = self.is_hilight(text)
         win.speakers[nick] = time.time()
-        path_names = None
+        path_names = hops = None
         if p.get("path"):
             mode = p.get("path_hash_mode", 0)
             hops = packets.split_path(p["path"], mode + 1 if mode >= 0 else 1)
             path_names = ",".join(self.resolve_hash(h) or h for h in hops)
         rec = {"k": "msg", "nick": nick, "text": text, "hl": hl, "hops": p.get("path_len"),
-               "snr": p.get("SNR"), "st_ts": p.get("sender_timestamp"), "path": path_names}
+               "snr": p.get("SNR"), "st_ts": p.get("sender_timestamp"), "path": path_names,
+               "route": hops if p.get("path") else None}
         self.note_snr(nick, p.get("SNR"))
         self.add(win, rec, activity=3 if hl else 2)
         if hl:

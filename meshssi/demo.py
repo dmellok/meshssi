@@ -314,7 +314,8 @@ class FakeMeshCore:
         idx = next(i for i, (n, _) in CHANNELS.items() if n == chan_name)
         hops = random.randint(0, 4)
         p = {"type": "CHAN", "channel_idx": idx, "path_len": hops, "txt_type": 0, "sender_timestamp": int(time.time()),
-             "text": f"{nick}: {text}", "SNR": round(random.uniform(-10, 11) * 4) / 4}
+             "text": f"{nick}: {text}", "SNR": round(random.uniform(-10, 11) * 4) / 4,
+             "path": "".join(demo_route(hops)), "path_hash_mode": 0}
         self.inbox.append(Event(EventType.CHANNEL_MSG_RECV, p, {"channel_idx": idx}))
         self.later(delay, Event(EventType.MESSAGES_WAITING, {}))
         self.later(delay, self.rx_event("GRP_TXT", f"{nick}: {text}", chan_name=chan_name))
@@ -343,6 +344,12 @@ class FakeMeshCore:
                 self.queue_dm("ada 🦊", random.choice(["you around?", "check #mesh-dev", "nice trace results"]))
 
 
+def demo_route(hops: int) -> list[str]:
+    """A plausible repeater route of `hops` hops, ending at the repeater nearest us."""
+    rpts = [c["public_key"][:2] for c in CONTACTS if c["type"] == 2] + [key(n)[:2] for n, t, *_ in STRANGERS if t == 2]
+    return random.sample(rpts[1:], min(hops - 1, len(rpts) - 1)) + [rpts[0]] if hops else []
+
+
 def seed_history(app: MeshssiApp) -> None:
     """Scrollback for the screenshots, as if the client had been running for an hour."""
 
@@ -366,6 +373,9 @@ def seed_history(app: MeshssiApp) -> None:
         msg("ada 🦊", "flood test from the ridge trail — who copies?", 300, hops=4, snr=-12.5),
         msg("bramble", "copy, 4 hops, -12.5", 280, hops=1, snr=4.75),
     ]
+    for r in pub.recs:
+        if r.get("hops"):
+            r["route"] = demo_route(r["hops"])
     pub.marker = pub.recs[6]["id"] = "seed-marker"
     for r in pub.recs:
         if not r.get("own"):

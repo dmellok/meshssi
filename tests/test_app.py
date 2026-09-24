@@ -242,3 +242,36 @@ def test_prompt_counter_wrapping_history_and_keys():
             await app.action_quit()
 
     asyncio.run(run())
+
+
+def test_clicking_a_hop_count_names_the_route_and_traces_it():
+    async def run():
+        app = DemoApp(live=False)
+        async with app.run_test(size=(140, 40)) as pilot:
+            await boot(pilot, app)
+            pub = app.find_window("chan:Public")
+            app.switch(app.windows.index(pub))
+            rec = next(r for r in pub.recs if r.get("hops", 0) >= 2 and r.get("route"))
+            line = app.render_rec(rec)
+            assert any("@click" in (span.style.meta if hasattr(span.style, "meta") else {}) for span in line.spans)
+            traces = []
+            orig = app.mc.commands.send_trace
+
+            async def spy(**kw):
+                traces.append(kw.get("path"))
+                return await orig(**kw)
+
+            app.mc.commands.send_trace = spy
+            await app.action_hops(rec["id"])
+            await pilot.pause(3)
+            text = "\n".join(r.get("text", "") for r in pub.recs[-6:])
+            assert "Ridgeline Rpt" in text and "→ you" in text  # names, not hashes
+            back = list(reversed(rec["route"]))
+            assert traces == [",".join(back + back[-2::-1])]
+            direct = next(r for r in pub.recs if r.get("hops") == 0) if any(r.get("hops") == 0 for r in pub.recs) else None
+            if direct:
+                await app.action_hops(direct["id"])
+                assert "directly" in pub.recs[-1]["text"]
+            await app.action_quit()
+
+    asyncio.run(run())

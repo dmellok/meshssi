@@ -4,6 +4,10 @@
 
 ### New
 - **A size counter on the input line.** While you type a message, it shows how many bytes of the packet limit you've used (e.g. `87/141`). It turns yellow at 75%, red at 90%, and shows `· 2 msgs` once the message will be split into several packets. It counts bytes, because that's the radio's limit (emoji use 4), and accounts for your name on channel messages.
+- **Click a hop count to see the route and trace it.** Clicking the `2»` next to a message shows the repeaters it came through, by name ("ada 🦊 → Blue Mtns Rpt → Ridgeline Rpt → you"), then traces that route with SNR at every hop.
+  - For channel messages this is the route the message actually took, when the radio logged the packet. Otherwise it says so.
+  - In a DM window it shows and traces your stored route to that contact.
+  - A message heard directly just says there were no repeaters.
 - **The input line wraps.** Long messages grow the input onto more lines (up to 6) instead of scrolling sideways. ↑/↓ still recall history from the first or last line, and move between wrapped lines otherwise. Pasted line breaks become spaces.
 
 ## 0.3.1

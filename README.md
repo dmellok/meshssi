@@ -52,7 +52,7 @@ Working on meshssi itself? `git clone`, then `python3 -m venv .venv && .venv/bin
 
 Channel messages you send show **heard ×N** as repeaters relay them back to you. `/graphs` plots noise floor, RSSI/SNR, traffic, airtime, battery, and SNR per node over time.
 
-**Routes.** `/trace` sends a trace along a route and shows the SNR at every hop. `/path` runs path discovery. `/discover` asks nearby nodes to identify themselves. `/scope` limits floods to a region.
+**Routes.** Click the hop count next to any message (e.g. `2»`) to see the repeaters it came through, by name, and trace that route. `/trace` sends a trace along a route and shows the SNR at every hop. `/path` runs path discovery. `/discover` asks nearby nodes to identify themselves. `/scope` limits floods to a region.
 
 **Administer repeaters and rooms.** Log in, then run CLI commands with `/rcmd`; replies appear in the node's window. Also: `/rstatus`, `/neighbours` (named from what you've heard), `/telemetry`, `/acl` and `/setperm`, `/owner`, `/regions`. `/watch` adds repeaters to a dashboard (`/dash`) that polls their battery, uptime, noise and airtime on a schedule. `/room` logs into room servers, shows posts by author, and can save the password for auto-login.
 
