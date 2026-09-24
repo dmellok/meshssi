@@ -7,11 +7,11 @@
 # first. uv also fetches a suitable Python if yours is older than 3.11.
 #
 # Environment overrides:
-#   MESHSSI_VERSION=0.3.0      install a specific release
+#   MESHSSI_VERSION=0.3.1      install a specific release
 #   MESHSSI_SOURCE=<path|url>  install from a local wheel/checkout or any pip-installable URL
 set -eu
 
-VERSION="${MESHSSI_VERSION:-0.3.0}"
+VERSION="${MESHSSI_VERSION:-0.3.1}"
 REPO="https://github.com/dmellok/meshssi"
 SOURCE="${MESHSSI_SOURCE:-$REPO/releases/download/v$VERSION/meshssi-$VERSION-py3-none-any.whl}"
 
