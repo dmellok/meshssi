@@ -200,3 +200,45 @@ def test_setperm_is_strict_and_confirmed():
             await app.action_quit()
 
     asyncio.run(run())
+
+
+def test_prompt_counter_wrapping_history_and_keys():
+    async def run():
+        app = DemoApp(live=False)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await boot(pilot, app)
+            app.switch(app.windows.index(app.find_window("chan:#hiking")))
+            inp = app.query_one("#input")
+            counter = app.query_one("#counter")
+            limit = 150 - len(app.my_name.encode()) - 2
+            await pilot.press(*"hello")
+            await pilot.pause(0.1)
+            assert str(counter.render()) == f"5/{limit}"
+            inp.value = "x" * (limit - 5)
+            await pilot.pause(0.1)
+            assert inp.size.height > 1  # the input grew instead of scrolling sideways
+            assert str(counter.render()).startswith(f"{limit - 5}/")
+            inp.value = "word " * 40
+            await pilot.pause(0.1)
+            assert "2 msgs" in str(counter.render())
+            inp.value = "/help"
+            await pilot.pause(0.1)
+            assert str(counter.render()) == ""  # commands aren't messages
+            inp.value = "on the summit"
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            assert inp.value == "" and app.find_window("chan:#hiking").recs[-1]["text"] == "on the summit"
+            await pilot.press("up")
+            assert inp.value == "on the summit"
+            await pilot.press("down")
+            assert inp.value == ""
+            await pilot.press(*"/qu", "tab")
+            assert inp.value in ("/query ", "/quit ")
+            inp.value = ""
+            await app.run_command("map")
+            await pilot.press("+", "right")
+            await pilot.pause(0.2)
+            assert app.map_state.user is not None and inp.value == ""
+            await app.action_quit()
+
+    asyncio.run(run())

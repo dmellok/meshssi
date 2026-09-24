@@ -14,7 +14,8 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Input, RichLog, Static
+from textual.message import Message
+from textual.widgets import RichLog, Static, TextArea
 
 from . import geo, packets
 from .commands import CommandsMixin
@@ -44,48 +45,100 @@ class Window:
     marker: str | None = None  # id of the last record seen before leaving the window
 
 
-class PromptInput(Input):
-    """Input line with history and irssi-ish tab completion."""
+class PromptInput(TextArea):
+    """The input line: one logical line that soft-wraps onto more rows as it grows, with irssi-style
+    history (up/down), tab completion, and Enter to send."""
 
-    BINDINGS = [
-        Binding("tab", "complete", show=False),
-        Binding("up", "history(-1)", show=False),
-        Binding("down", "history(1)", show=False),
-    ]
+    BINDINGS = [Binding("tab", "complete", show=False)]
+
+    class Submitted(Message):
+        def __init__(self, value: str):
+            super().__init__()
+            self.value = value
 
     def __init__(self, **kw):
-        super().__init__(**kw)
-        self.history: list[str] = []
+        super().__init__(soft_wrap=True, compact=True, show_line_numbers=False, tab_behavior="focus",
+                         highlight_cursor_line=False, **kw)
+        self._rows = 1
+        self.sent_history: list[str] = []
         self.hist_pos = 0
         self._comp: tuple[int, list[str], int] | None = None  # (start, candidates, index)
         self._comp_value = ""
 
+    # an Input-like API, so the rest of the app doesn't care that this is a TextArea
+    @property
+    def value(self) -> str:
+        return self.text
+
+    @value.setter
+    def value(self, text: str) -> None:
+        self.load_text(text.replace("\n", " "))
+        self.move_cursor((0, len(self.text)))
+
+    @property
+    def cursor_position(self) -> int:
+        return self.cursor_location[1]
+
+    @cursor_position.setter
+    def cursor_position(self, n: int) -> None:
+        self.move_cursor((0, n))
+
     def remember(self, line: str) -> None:
-        if line and (not self.history or self.history[-1] != line):
-            self.history.append(line)
-        self.hist_pos = len(self.history)
+        if line and (not self.sent_history or self.sent_history[-1] != line):
+            self.sent_history.append(line)
+        self.hist_pos = len(self.sent_history)
 
     def action_history(self, step: int) -> None:
-        if self._map_mode():
-            self.app.map_key("up" if step < 0 else "down")
+        if not self.sent_history:
             return
-        if not self.history:
-            return
-        self.hist_pos = max(0, min(len(self.history), self.hist_pos + step))
-        self.value = self.history[self.hist_pos] if self.hist_pos < len(self.history) else ""
-        self.cursor_position = len(self.value)
+        self.hist_pos = max(0, min(len(self.sent_history), self.hist_pos + step))
+        self.value = self.sent_history[self.hist_pos] if self.hist_pos < len(self.sent_history) else ""
+
+    def _visual_row(self) -> tuple[int, int]:
+        """(row the cursor is on, number of rows) of the wrapped text."""
+        try:
+            _, y = self.wrapped_document.location_to_offset(self.cursor_location)
+            return y, max(1, self.wrapped_document.height)
+        except Exception:  # noqa: BLE001
+            return 0, 1
 
     def _map_mode(self) -> bool:
         win = self.app.win
         return win.kind == "view" and win.view == "map" and not self.value
 
     async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":  # send, never insert a newline
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Submitted(self.text))
+            return
         if self._map_mode() and event.character in ("+", "=", "-", "_", "0", "c"):
             event.stop()
             event.prevent_default()
             self.app.map_key(event.character)
             return
         await super()._on_key(event)
+
+    async def _on_paste(self, event: events.Paste) -> None:
+        event.stop()
+        self.insert(" ".join(event.text.splitlines()))
+
+    def action_cursor_up(self, select: bool = False) -> None:
+        if self._map_mode():
+            self.app.map_key("up")
+        elif self._visual_row()[0] == 0:  # on the top row: history, like a one-line input
+            self.action_history(-1)
+        else:
+            super().action_cursor_up(select)
+
+    def action_cursor_down(self, select: bool = False) -> None:
+        row, rows = self._visual_row()
+        if self._map_mode():
+            self.app.map_key("down")
+        elif row >= rows - 1:
+            self.action_history(1)
+        else:
+            super().action_cursor_down(select)
 
     def action_cursor_left(self, select: bool = False) -> None:
         if self._map_mode():
@@ -109,7 +162,6 @@ class PromptInput(Input):
         start, cands, idx = self._comp
         choice = cands[idx % len(cands)]
         self.value = self.value[:start] + choice
-        self.cursor_position = len(self.value)
         self._comp = (start, cands, idx + 1)
         self._comp_value = self.value
 
@@ -125,10 +177,11 @@ class MeshssiApp(CommandsMixin, App):
     #view { padding: 0 1; height: 1fr; }
     #nicklist { width: 32; padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
     #statusbar { height: 1; padding: 0 1; }
-    #promptrow { height: 1; }
+    #promptrow { height: auto; }
     #prompt { width: auto; padding: 0 0 0 1; }
-    #input { border: none; height: 1; padding: 0 1; }
+    #input { border: none; height: auto; max-height: 6; padding: 0 1; width: 1fr; }
     #input:focus { border: none; }
+    #counter { width: auto; padding: 0 1; }
     """
     BINDINGS = [
         *[Binding(f"alt+{n % 10}", f"goto({n})", show=False, priority=True) for n in range(1, 11)],
@@ -192,6 +245,7 @@ class MeshssiApp(CommandsMixin, App):
         with Horizontal(id="promptrow"):
             yield Static(id="prompt")
             yield PromptInput(id="input")
+            yield Static(id="counter")
 
     def on_mount(self) -> None:
         self.query_one("#log2").display = False
@@ -275,7 +329,7 @@ class MeshssiApp(CommandsMixin, App):
         for sel in ("#topic", "#statusbar"):
             w = self.query_one(sel)
             w.styles.background, w.styles.color = t["bar_bg"], t["bar_fg"]
-        for sel in ("#log", "#log2", "#view", "#input", "#promptrow", "#prompt"):
+        for sel in ("#log", "#log2", "#view", "#input", "#promptrow", "#prompt", "#counter"):
             w = self.query_one(sel)
             w.styles.background, w.styles.color = t["background"], t["foreground"]
             w.styles.scrollbar_background = t["background"]
@@ -514,6 +568,7 @@ class MeshssiApp(CommandsMixin, App):
         self.refresh_statusbar()
         self.refresh_nicklist()
         self.query_one("#prompt", Static).update(Text(f"[{self.win.name}]", "bold"))
+        self.refresh_counter()
 
     def refresh_topic(self) -> None:
         w = self.win
@@ -1333,7 +1388,38 @@ class MeshssiApp(CommandsMixin, App):
         self.exit()
 
     # ── input & sending ───────────────────────────────────────────────────
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        self.refresh_counter()
+        inp = event.text_area
+        rows = max(1, inp.wrapped_document.height)
+        if rows != getattr(inp, "_rows", 1):  # the prompt grew or shrank: repaint everything above it too
+            inp._rows = rows
+            self.call_after_refresh(self.screen.refresh, layout=True)
+
+    def refresh_counter(self) -> None:
+        """Bytes used of the packet limit, colour-coded as it fills, and how many packets it'll go as."""
+        counter = self.query_one("#counter", Static)
+        text = self.query_one("#input", PromptInput).value
+        win = self.win
+        if not text.strip() or (text.startswith("/") and not text.startswith("//")) or win.kind not in ("channel", "query"):
+            counter.update("")
+            return
+        text = text[1:] if text.startswith("//") else text
+        if self.cfg.get("chat.emoji_shortcodes", True):
+            text = expand_shortcodes(text)
+        limit = MAX_TEXT - len(self.my_name.encode()) - 2 if win.kind == "channel" else MAX_TEXT
+        used = len(text.strip().encode())
+        parts = len(split_utf8(text, limit))
+        t = self.st
+        if parts > 1:
+            label, style = f"{used}/{limit} · {parts} msgs", t["bad"]
+        else:
+            fill = used / limit
+            style = t["dim"] if fill < 0.75 else (t["warn"] if fill < 0.9 else t["bad"])
+            label = f"{used}/{limit}"
+        counter.update(Text(label, style))
+
+    async def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         line = event.value
         inp = self.query_one("#input", PromptInput)
         inp.remember(line)

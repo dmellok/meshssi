@@ -40,6 +40,8 @@ Working on meshssi itself? `git clone`, then `python3 -m venv .venv && .venv/bin
 
 **Chat like irssi.** Window 1 is status, then one window per channel slot on the radio, then DM windows. Tab completes commands, settings and node names. Names can include spaces and emoji: skip the emoji, or type its name (`turtle hops` or `turtle` both find "Turtle Hops 🐢"), and any word of the name works (`hops`). At the start of a channel line, Tab inserts an `@[mention]`. Also included: input history, `/lastlog` search, `/ignore`, `/hilight`, `/away` with a single auto-reply per person, `/alias`, `/split` to watch two windows at once, and an unread marker line. URLs are clickable, and `:shortcodes:` become emoji. Scrollback is saved, and open DMs are restored on restart.
 
+**Composing.** Long messages wrap onto more input lines as you type. A counter beside the input shows bytes used against the packet limit, turning yellow then red as you approach it, and `· 2 msgs` when a message will be split into several packets.
+
 **Reliable DMs.** Each DM shows `…` while pending, `✓` when acked (with round-trip time) and `✗` if it failed. Missing acks trigger automatic retries, falling back to flood routing after `chat.flood_after` tries. If an ack arrives after meshssi gave up, the ✗ turns into ✓. Long messages are split to fit the packet size.
 
 **See the mesh.** `/rf` is a live packet monitor showing every packet the radio hears: RSSI, SNR, route, type and path. Hops are named when they're unambiguous, and channel traffic is decrypted where you hold the key. Every advert heard feeds a registry of nodes, whether or not they're your contacts, which powers:
@@ -78,7 +80,7 @@ Channel messages you send show **heard ×N** as repeaters relay them back to you
 | ctrl+n / ctrl+p, alt+→/← | next / previous window |
 | ctrl+a, alt+a | jump to the most active window (DMs and mentions first) |
 | tab | complete; press again to cycle |
-| ↑ / ↓ | input history |
+| ↑ / ↓ | input history (or move between lines when a long message wraps) |
 | PgUp / PgDn | scroll |
 | F2 | toggle the nicklist |
 
