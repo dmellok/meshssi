@@ -209,7 +209,7 @@ Themes live in [`meshssi/themes.py`](meshssi/themes.py). A new one is usually a 
 | `/wc` | Close the current window (use /part to leave a channel) (also `/close`) |
 | `/window <n>\|close\|list\|move <n>` | Switch, close, list or reorder windows (also `/win`, `/w`) |
 
-Commands marked "asks for confirmation" (`/reboot`, `/radio`, `/rmcontact`, `/keybackup`, `/keyrestore`, parting Public) only run if you repeat them within 10 seconds.
+Commands that are hard to undo only run if you repeat them within 10 seconds: `/reboot`, `/radio`, `/rmcontact`, `/keybackup`, `/keyrestore`, `/factoryreset` (which also needs the node's name), `/setperm`, and parting Public. The prompt says exactly what will happen, e.g. "make Drop Bear 🐨 (a1b2c3d4e5f6) ADMIN on Big Stick Rpt". `/setperm` also only accepts an exact contact name or a full key (a prefix only when removing someone), so a typo can't resolve to someone else. `/rcmd` sends raw CLI commands to a repeater unchecked; that's its purpose.
 
 ## Daemon mode: share the radio
 

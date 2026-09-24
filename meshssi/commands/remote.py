@@ -133,20 +133,64 @@ async def c_acl(app, args):
         app.echo(f"  {(app.name_for(e['key']) or '?'):<28} {e['key']}  {PERMS.get(e['perm'] & 3, e['perm'])}")
 
 
+def resolve_acl_target(app, who: str, level: int) -> tuple[str | None, str | None, str]:
+    """Resolve the user for /setperm strictly: an exact contact or heard-node name, a full 64-hex key, or
+    (only when removing someone, which the firmware allows by prefix) an unambiguous hex prefix of 8+ chars.
+    No fuzzy matching: a near-miss must not land on someone else's key. Returns (key, name, error)."""
+    from ..util import name_forms
+
+    q = who.strip().lower()
+    known = {k: c["adv_name"] for k, c in (app.mc.contacts.items() if app.mc else [])}
+    for k, h in app.heard.items():
+        known.setdefault(k, h.get("name", ""))
+    by_name = [k for k, n in known.items() if n and (q == n.lower() or q in name_forms(n))]
+    if len(by_name) == 1:
+        return by_name[0], known[by_name[0]], ""
+    if len(by_name) > 1:
+        return None, None, f"{who!r} matches {len(by_name)} nodes; use a key prefix instead"
+    if not q or any(ch not in "0123456789abcdef" for ch in q):
+        return None, None, f"no contact or heard node is called exactly {who!r} (names must match in full here)"
+    if len(q) == 64:
+        return q, known.get(q), ""
+    if level != 0:
+        return None, None, ("granting access needs the full 64-character key (the firmware rejects prefixes); "
+                            "use the contact's exact name or its full key")
+    if len(q) < 8:
+        return None, None, "key prefixes must be at least 8 hex characters"
+    hits = [k for k in known if k.startswith(q)]
+    if len(hits) > 1:
+        return None, None, f"prefix {q} matches {len(hits)} known nodes; use more characters"
+    return (hits[0] if hits else q), (known[hits[0]] if hits else None), ""
+
+
 @command("setperm", "remote", "/setperm <node> <contact|key> <guest|read-only|read-write|admin>",
-         "Change a user's permission on a repeater/room")
+         "Change a user's permission on a repeater/room (asks for confirmation)")
 async def c_setperm(app, args):
     node, rest = app.split_target(args)
-    who, level = rest.rsplit(" ", 1) if " " in rest else (rest, "")
-    perm = {v: k for k, v in PERMS.items()}.get(level)
-    target = app.find_contact(who)
-    key = target["public_key"] if target else who
-    if not node or perm is None or len(key) < 8:
-        app.echo("Usage: /setperm <node> <contact or key prefix> <guest|read-only|read-write|admin>", "error")
+    who, level_word = rest.rsplit(" ", 1) if " " in rest else (rest, "")
+    levels = {v: k for k, v in PERMS.items()} | {str(k): k for k in PERMS}
+    level = levels.get(level_word.lower())
+    if not node or level is None or not who:
+        app.echo("Usage: /setperm <node> <exact contact name or key> <guest|read-only|read-write|admin>  "
+                 "(guest removes them from the access list)", "error")
+        return
+    key, name, err = resolve_acl_target(app, who, level)
+    if err:
+        app.echo(f"/setperm: {err}.", "error")
+        return
+    label = f"{name} ({key[:12]})" if name else key[:12] + ("…" if len(key) > 12 else "")
+    if level == 0:
+        action = f"remove {label} from {node['adv_name']}'s access list"
+    else:
+        action = f"make {label} {PERMS[level].upper() if level == 3 else PERMS[level]} on {node['adv_name']}"
+    if key == app.self_info.get("public_key") and level < 3:
+        action += " — this is YOU; you may lose admin access to this node"
+    if not app.confirm(action):
         return
     win = app.query_window(node)
-    app.add(win, {"k": "notice", "text": f"> setperm {key} {perm}", "lvl": "dim"})
-    await app.cmd(app.mc.commands.send_cmd(node, f"setperm {key} {perm}"))
+    app.add(win, {"k": "notice", "text": f"> setperm {key} {level}  ({label}: {PERMS[level]})", "lvl": "dim"})
+    await app.cmd(app.mc.commands.send_cmd(node, f"setperm {key} {level}"))
+    app.echo(f"Sent. The reply appears in {node['adv_name']}'s window; /acl {node['adv_name']} shows the result.", "ok")
 
 
 @command("owner", "remote", "/owner <node>", "Ask a node for its owner info (no login needed)")

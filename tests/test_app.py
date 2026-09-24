@@ -165,3 +165,38 @@ def test_long_lines_wrap_with_hanging_indent():
             await app.action_quit()
 
     asyncio.run(run())
+
+
+def test_setperm_is_strict_and_confirmed():
+    async def run():
+        app = DemoApp(live=False)
+        async with app.run_test(size=(140, 40)) as pilot:
+            await boot(pilot, app)
+            sent = []
+            orig = app.mc.commands.send_cmd
+
+            async def spy(dst, cmd, *a, **kw):
+                sent.append(cmd)
+                return await orig(dst, cmd, *a, **kw)
+
+            app.mc.commands.send_cmd = spy
+            rpt = "Ridgeline Rpt"
+            ada = BY_NAME["ada 🦊"]["public_key"]
+
+            def last():
+                return app.win.recs[-1]["text"] if app.win.recs else ""
+
+            await app.run_command(f"setperm {rpt} ad admin")  # partial name: refused, nothing sent
+            await app.run_command(f"setperm {rpt} adaa admin")  # typo: refused
+            await app.run_command(f"setperm {rpt} {ada[:10]} admin")  # prefix can't grant access
+            assert sent == []
+            await app.run_command(f"setperm {rpt} ada admin")  # emoji-less exact name: asks first
+            assert sent == [] and "ADMIN" in last() and ada[:12] in last()
+            await app.run_command(f"setperm {rpt} ada admin")  # repeated: sent with the full key
+            assert sent == [f"setperm {ada} 3"]
+            await app.run_command(f"setperm {rpt} {ada[:10]} guest")
+            await app.run_command(f"setperm {rpt} {ada[:10]} guest")  # removal by prefix, confirmed
+            assert sent[-1] == f"setperm {ada} 0"
+            await app.action_quit()
+
+    asyncio.run(run())
