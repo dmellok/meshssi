@@ -176,7 +176,6 @@ class MeshssiApp(CommandsMixin, App):
     #main { height: 1fr; }
     #panes { width: 1fr; }
     #log, #log2 { border: none; padding: 0 1; scrollbar-size-vertical: 1; overflow-x: hidden; }
-    #windows, #nicklist, #hints { link-style: none; link-style-hover: bold underline; }
     #log2 { height: 40%; }
     #view { padding: 0 1; height: 1fr; }
     #nicklist { width: 32; padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
@@ -249,14 +248,14 @@ class MeshssiApp(CommandsMixin, App):
             for i, (label, _) in enumerate(easy.TOOLBAR):
                 yield Button(label, id=f"tb{i}", compact=True)
         with Horizontal(id="main"):
-            yield Static(id="windows")
+            yield easy.ClickStatic(id="windows")
             with Vertical(id="panes"):
                 yield RichLog(id="log2", wrap=True, markup=False, highlight=False, max_lines=3000)
                 yield RichLog(id="log", wrap=True, markup=False, highlight=False, max_lines=5000)
                 yield Static(id="view")
-            yield Static(id="nicklist")
+            yield easy.ClickStatic(id="nicklist")
         yield Static(id="statusbar")
-        yield Static(id="hints")
+        yield easy.ClickStatic(id="hints")
         with Horizontal(id="promptrow"):
             yield Static(id="prompt")
             yield PromptInput(id="input")
@@ -662,18 +661,18 @@ class MeshssiApp(CommandsMixin, App):
             bar.append(*br).append(f"bat {mv / 1000:.2f}V").append(*er)
         self.query_one("#statusbar", Static).update(bar)
         if self.query_one("#windows").display:
-            self.query_one("#windows", Static).update(easy.render_window_list(self))
+            self.query_one("#windows", easy.ClickStatic).show(easy.render_window_list(self))
 
     def refresh_nicklist(self) -> None:
         w = self.win
-        out = Text(no_wrap=True, overflow="ellipsis")
+        out = easy.ClickText(no_wrap=True, overflow="ellipsis")
         dim = self.st["dim"]
         if w.kind == "channel":
             out.append(f"heard in {w.name}\n", "bold underline")
             self._nick_targets = []
             for nick, ts in sorted(w.speakers.items(), key=lambda kv: -kv[1]):
                 self._nick_targets.append(nick)
-                out.append(clean(nick), Style.parse(self.nick_color(nick)) + easy.click(f"app.node_idx({len(self._nick_targets) - 1})")).append(f"  {ago(ts).replace(' ago', '')}\n", dim)
+                out.append(clean(nick), self.nick_color(nick), f"node_idx({len(self._nick_targets) - 1})").append(f"  {ago(ts).replace(' ago', '')}\n", dim)
         elif w.kind == "query" and (c := self.contact(w.pubkey)):
             out.append(f"{c['adv_name']}\n", "bold underline")
             out.append(f"type   {CONTACT_TYPES.get(c['type'])}\n")
@@ -693,7 +692,7 @@ class MeshssiApp(CommandsMixin, App):
             out.append(f"contacts ({len(contacts)})\n", "bold underline")
             for c in contacts:
                 out.append(TYPE_GLYPH.get(c["type"], "?") + " ", dim)
-                out.append(c["adv_name"], Style.parse(self.nick_color(c["adv_name"])) + easy.click(f"app.node_key('{c['public_key']}')"))
+                out.append(c["adv_name"], self.nick_color(c["adv_name"]), f"node_key('{c['public_key']}')")
                 out.append(f"  {ago(c.get('last_advert')).replace(' ago', '')}\n", dim)
             others = [h for k, h in self.heard.items() if not (self.mc and k in self.mc.contacts)]
             if others:
@@ -701,8 +700,8 @@ class MeshssiApp(CommandsMixin, App):
                 for h in sorted(others, key=lambda h: -h.get("last", 0))[:30]:
                     hk = next((k for k, v in self.heard.items() if v is h), "")
                     out.append(TYPE_GLYPH.get(h.get("type"), "?") + " ", dim)
-                    out.append(h["name"], Style.parse(dim) + easy.click(f"app.node_key('{hk}')")).append(f"  {ago(h.get('last')).replace(' ago', '')}\n", dim)
-        self.query_one("#nicklist", Static).update(out)
+                    out.append(h["name"], dim, f"node_key('{hk}')").append(f"  {ago(h.get('last')).replace(' ago', '')}\n", dim)
+        self.query_one("#nicklist", easy.ClickStatic).show(out)
 
     def route_names(self, hashes: list[str]) -> str:
         return " → ".join(self.resolve_hash(h) or h for h in hashes)
@@ -1475,11 +1474,11 @@ class MeshssiApp(CommandsMixin, App):
             self.call_after_refresh(self.screen.refresh, layout=True)
 
     def refresh_hints(self) -> None:
-        hints = self.query_one("#hints", Static)
+        hints = self.query_one("#hints", easy.ClickStatic)
         text = easy.hint_for(self, self.query_one("#input", PromptInput).value) if self.cfg.get("ui.hints", True) else None
         hints.display = text is not None
         if text is not None:
-            hints.update(text)
+            hints.show(text)
 
     # ── the friendlier layer ──────────────────────────────────────────────
     def apply_layout(self) -> None:

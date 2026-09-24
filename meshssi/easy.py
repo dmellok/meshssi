@@ -18,7 +18,50 @@ CONTACT_ARGS = ("<contact", "<node", "<repeater", "<room")
 
 
 def click(action: str) -> Style:
+    """Click meta for the chat log (RichLog keeps the text's own colours)."""
     return Style.from_meta({"@click": action})
+
+
+class ClickText:
+    """Build Rich text while remembering where each clickable piece lands (row, columns). Plain Static widgets
+    recolour @click text as links, so the sidebar, window list and hints use this and ClickStatic instead."""
+
+    def __init__(self, **kw):
+        self.text = Text(**kw)
+        self.regions: list[tuple[int, int, int, str]] = []  # (row, first col, end col, action)
+        self.row = self.col = 0
+
+    def append(self, s: str, style=None, action: str | None = None) -> "ClickText":
+        from rich.cells import cell_len
+
+        if action and "\n" not in s:
+            self.regions.append((self.row, self.col, self.col + cell_len(s), action))
+        self.text.append(s, style)
+        if "\n" in s:
+            self.row += s.count("\n")
+            self.col = cell_len(s.rsplit("\n", 1)[1])
+        else:
+            self.col += cell_len(s)
+        return self
+
+
+class ClickStatic(Static):
+    """A Static whose text pieces run app actions when clicked, keeping their own colours."""
+
+    regions: list[tuple[int, int, int, str]] = []
+
+    def show(self, ct: ClickText) -> None:
+        self.regions = ct.regions
+        self.update(ct.text)
+
+    async def on_click(self, event) -> None:
+        x = event.x - self.styles.padding.left
+        y = event.y - self.styles.padding.top
+        for row, start, end, action in self.regions:
+            if row == y and start <= x < end:
+                event.stop()
+                await self.app.run_action(action if action.startswith("app.") else f"app.{action}")
+                return
 
 
 # ── node card: click a name anywhere ─────────────────────────────────────────────────────────────────
@@ -123,13 +166,13 @@ class NodeCard(ModalScreen):
 
 
 # ── command hints above the input ────────────────────────────────────────────────────────────────────
-def hint_for(app, line: str, limit: int = 8) -> Text | None:
-    """What to show above the input while a command is being typed, or None."""
+def hint_for(app, line: str, limit: int = 8) -> "ClickText | None":
+    """What to show above the input while a command is being typed (a ClickText), or None."""
     if not line.startswith("/") or line.startswith("//"):
         return None
     name, sep, args = line[1:].partition(" ")
     st = app.st
-    out = Text(no_wrap=True, overflow="ellipsis")
+    out = ClickText(no_wrap=True, overflow="ellipsis")
     if not sep:  # still typing the command name: list matches, click to pick
         q = name.lower()
         names = sorted(n for n in COMMANDS if n.startswith(q)) + sorted(
@@ -142,7 +185,7 @@ def hint_for(app, line: str, limit: int = 8) -> Text | None:
             _, _, usage, help_ = COMMANDS[ALIASES.get(n, n)]
             if i:
                 out.append("\n")
-            out.append(f"/{n}", Style.parse("bold") + click(f"app.pick_command('{n}')"))
+            out.append(f"/{n}", "bold", f"pick_command('{n}')")
             out.append(f"  {usage.split(' ', 1)[1] if ' ' in usage else ''}", st["meta"])
             out.append(f"  {help_}", st["dim"])
         if len(names) > limit:
@@ -162,7 +205,7 @@ def hint_for(app, line: str, limit: int = 8) -> Text | None:
                 continue
             nm = clean(c["adv_name"])
             out.append("\n  " if shown % 4 == 0 else "   ")
-            out.append(nm, Style.parse(app.nick_color(nm)) + click(f"app.pick_contact('{c['public_key']}')"))
+            out.append(nm, app.nick_color(nm), f"pick_contact('{c['public_key']}')")
             out.append(f" {TYPES.get(c['type'], '?').split()[0]}", st["meta"])
             shown += 1
             if shown >= 12:
@@ -197,18 +240,20 @@ class MeshCommands(Provider):
 
 
 # ── easy layout: window list, toolbar ────────────────────────────────────────────────────────────────
-def render_window_list(app) -> Text:
+def render_window_list(app) -> ClickText:
     st = app.st
-    out = Text(no_wrap=True, overflow="ellipsis")
+    out = ClickText(no_wrap=True, overflow="ellipsis")
     out.append("windows\n", "bold underline")
     for i, w in enumerate(app.windows):
         current = i == app.current
         mark = {0: "", 1: " ·", 2: " ●", 3: " ●"}[w.activity]
         style = "bold reverse" if current else (st["act"][w.activity - 1] if w.activity else "")
-        out.append(f"{i + 1:>2} {clean(w.name)[:18]}{mark}", Style.parse(style or "none") + click(f"app.goto({i + 1})"))
+        out.append(f"{i + 1:>2} {clean(w.name)[:18]}{mark}", style or None, f"goto({i + 1})")
         out.append("\n")
-    out.append("\n+ join channel", Style.parse(st["dim"]) + click("app.fill('/join #')"))
-    out.append("\n+ message someone", Style.parse(st["dim"]) + click("app.fill('/query ')"))
+    out.append("\n")
+    out.append("+ join channel", st["dim"], "fill('/join #')")
+    out.append("\n")
+    out.append("+ message someone", st["dim"], "fill('/query ')")
     return out
 
 

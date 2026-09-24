@@ -337,3 +337,28 @@ def test_easy_layer_cards_hints_palette_and_layout():
             await app.action_quit()
 
     asyncio.run(run())
+
+
+def test_clickable_sidebar_keeps_name_colours():
+    """Plain Static widgets recolour @click text as links; the sidebar must keep each nick's own colour."""
+    from meshssi.easy import NodeCard
+
+    async def run():
+        app = DemoApp(live=False)
+        async with app.run_test(size=(130, 38)) as pilot:
+            await boot(pilot, app)
+            app.switch(app.windows.index(app.find_window("chan:Public")))
+            await pilot.pause(0.4)
+            nl = app.query_one("#nicklist")
+            seg = next(s for s in nl.render_line(1) if s.text.strip())
+            assert seg.style.color and seg.style.color.name != "#e0e0e0"
+            name = seg.text.strip()
+            from rich.color import Color
+
+            assert Color.parse(app.nick_color(name)).get_truecolor() == seg.style.color.get_truecolor()
+            await pilot.click("#nicklist", offset=(3, 1))
+            await pilot.pause(0.3)
+            assert isinstance(app.screen, NodeCard)
+            await app.action_quit()
+
+    asyncio.run(run())
