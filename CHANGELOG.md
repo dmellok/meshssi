@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 ### New
 - **Click a name for actions.** Clicking a nick in the chat, the sidebar or the contact list opens a card with that node's details (type, route, distance, last heard) and buttons for what you can do.
@@ -21,14 +21,15 @@
   - A message heard directly just says there were no repeaters.
 - **The input line wraps.** Long messages grow the input onto more lines (up to 6) instead of scrolling sideways. ↑/↓ still recall history from the first or last line, and move between wrapped lines otherwise. Pasted line breaks become spaces.
 
+### Fixed
+- Misaligned rows and stray blocks when names or messages contain emoji joiners, variation selectors, skin tones, flags or zero-width characters. Terminals and Rich measured these differently, so they're now normalised for display. Right-to-left override characters, which could make a name display as a different one, are removed too.
+- Names in the sidebar keep their colours now that they're clickable.
+
 ## 0.3.1
 
 ### Changed
 - Hop counts are a column before the nick (` 2»`, green ` 0»` for direct) instead of a tag at the end of each message. SNR is hidden unless you turn on `ui.show_snr`, and `ui.show_hops` turns the column off.
 - Long lines wrap with a hanging indent under the message, as irssi does, instead of running back under the timestamp.
-
-### Fixed
-- Misaligned rows and stray blocks when names or messages contain emoji joiners, variation selectors, skin tones, flags or zero-width characters. Terminals and Rich measured these differently; they're now normalised for display.
 
 ### Fixed (from a code audit prompted by a reader's report about /setperm)
 - `/setperm` asks for confirmation, naming the node, the user's name and key, and the level. It only accepts an exact contact name or a full key; a prefix is accepted only when removing someone, matching the firmware.

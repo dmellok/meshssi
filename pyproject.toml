@@ -1,6 +1,6 @@
 [project]
 name = "meshssi"
-version = "0.3.1"
+version = "0.4.0"
 description = "An irssi-style terminal client for MeshCore companion radios"
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
