@@ -19,6 +19,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "ui": {
         "theme": "irssi",
+        "layout": "classic",  # classic (irssi) or easy (window list, toolbar, key hints)
+        "hints": True,  # show matching commands and arguments above the input while typing /
         "timestamp_format": "%H:%M",
         "nicklist": True,
         "show_hops": True,  # hop-count column before the nick

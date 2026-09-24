@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### New
+- **Click a name for actions.** Clicking a nick in the chat, the sidebar or the contact list opens a card with that node's details (type, route, distance, last heard) and buttons for what you can do.
+  - For people: Message, Whois, Find route, Trace, Share card, Mention.
+  - For repeaters: Log in…, Status, Neighbours, Watch, CLI command…
+  - For rooms: Join room…
+  - For sensors: Telemetry.
+  - For heard-but-not-added nodes: Add contact.
+  
+  Actions that need more (a password, a CLI command) pre-fill the input line for you.
+- **Command hints.** Typing `/` lists matching commands with their arguments and a description; click one to pick it. Once a command is chosen, its usage shows above the input, and commands that take a node suggest matching contacts to click.
+- **Command palette (F1).** Search every command by name or description; picking one runs it, or pre-fills it if it needs arguments.
+- **Easy layout** (`/layout easy`): a clickable window list with unread markers (F3 toggles it in either layout), a toolbar (Channels, Message, Map, Packets, Graphs, Repeaters, Themes, Commands), and a key-hint bar. `/layout classic` is the irssi look, and still the default.
 - **A size counter on the input line.** While you type a message, it shows how many bytes of the packet limit you've used (e.g. `87/141`). It turns yellow at 75%, red at 90%, and shows `· 2 msgs` once the message will be split into several packets. It counts bytes, because that's the radio's limit (emoji use 4), and accounts for your name on channel messages.
 - **Click a hop count to see the route and trace it.** Clicking the `2»` next to a message shows the repeaters it came through, by name ("ada 🦊 → Blue Mtns Rpt → Ridgeline Rpt → you"), then traces that route with SNR at every hop.
   - For channel messages this is the route the message actually took, when the radio logged the packet. Otherwise it says so.

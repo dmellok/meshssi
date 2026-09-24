@@ -16,9 +16,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import RichLog, Static, TextArea
+from textual.widgets import Button, RichLog, Static, TextArea
 
-from . import geo, packets
+from . import easy, geo, packets
 from .commands import CommandsMixin
 from .config import Config
 from .notify import desktop_notify
@@ -169,11 +169,14 @@ class PromptInput(TextArea):
 
 class MeshssiApp(CommandsMixin, App):
     TITLE = "meshssi"
+    COMMANDS = App.COMMANDS | {easy.MeshCommands}
+    COMMAND_PALETTE_BINDING = "f1"
     CSS = """
     #topic { height: 1; padding: 0 1; }
     #main { height: 1fr; }
     #panes { width: 1fr; }
-    #log, #log2 { border: none; padding: 0 1; scrollbar-size-vertical: 1; }
+    #log, #log2 { border: none; padding: 0 1; scrollbar-size-vertical: 1; overflow-x: hidden; }
+    #windows, #nicklist, #hints { link-style: none; link-style-hover: bold underline; }
     #log2 { height: 40%; }
     #view { padding: 0 1; height: 1fr; }
     #nicklist { width: 32; padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
@@ -183,6 +186,11 @@ class MeshssiApp(CommandsMixin, App):
     #input { border: none; height: auto; max-height: 6; padding: 0 1; width: 1fr; }
     #input:focus { border: none; }
     #counter { width: auto; padding: 0 1; }
+    #hints { height: auto; max-height: 12; padding: 0 1; }
+    #windows { width: 24; padding: 0 1; }
+    #toolbar { height: 1; }
+    #toolbar Button { margin: 0 1 0 0; min-width: 8; }
+    #keyhints { height: 1; padding: 0 1; }
     """
     BINDINGS = [
         *[Binding(f"alt+{n % 10}", f"goto({n})", show=False, priority=True) for n in range(1, 11)],
@@ -193,6 +201,7 @@ class MeshssiApp(CommandsMixin, App):
         Binding("pageup", "scroll(-1)", show=False, priority=True),
         Binding("pagedown", "scroll(1)", show=False, priority=True),
         Binding("f2", "toggle_nicklist", show=False, priority=True),
+        Binding("f3", "toggle_windows", show=False, priority=True),
         Binding("ctrl+c", "quit", show=False, priority=True),
     ]
 
@@ -236,25 +245,34 @@ class MeshssiApp(CommandsMixin, App):
     # ── layout ────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
         yield Static(id="topic")
+        with Horizontal(id="toolbar"):
+            for i, (label, _) in enumerate(easy.TOOLBAR):
+                yield Button(label, id=f"tb{i}", compact=True)
         with Horizontal(id="main"):
+            yield Static(id="windows")
             with Vertical(id="panes"):
                 yield RichLog(id="log2", wrap=True, markup=False, highlight=False, max_lines=3000)
                 yield RichLog(id="log", wrap=True, markup=False, highlight=False, max_lines=5000)
                 yield Static(id="view")
             yield Static(id="nicklist")
         yield Static(id="statusbar")
+        yield Static(id="hints")
         with Horizontal(id="promptrow"):
             yield Static(id="prompt")
             yield PromptInput(id="input")
             yield Static(id="counter")
+        yield Static(id="keyhints")
 
     def on_mount(self) -> None:
         self.query_one("#log2").display = False
         self.query_one("#view").display = False
         self.query_one("#nicklist").display = bool(self.cfg.get("ui.nicklist", True))
+        self.query_one("#hints").display = False
+        self.apply_layout()
         self.apply_theme()
         self.query_one("#input").focus()
-        self.status("meshssi — an irssi-style MeshCore client. /help for commands.")
+        self.status("meshssi — an irssi-style MeshCore client. /help or F1 for commands, click any name for actions"
+                    + ("" if self.cfg.get("ui.layout") == "easy" else ", /layout easy for a mouse-friendly layout") + ".")
         if self.cfg.error:
             self.status(self.cfg.error, "error")
         for msg in self.plugins.load_all():
@@ -330,7 +348,7 @@ class MeshssiApp(CommandsMixin, App):
         for sel in ("#topic", "#statusbar"):
             w = self.query_one(sel)
             w.styles.background, w.styles.color = t["bar_bg"], t["bar_fg"]
-        for sel in ("#log", "#log2", "#view", "#input", "#promptrow", "#prompt", "#counter"):
+        for sel in ("#log", "#log2", "#view", "#input", "#promptrow", "#prompt", "#counter", "#hints", "#keyhints"):
             w = self.query_one(sel)
             w.styles.background, w.styles.color = t["background"], t["foreground"]
             w.styles.scrollbar_background = t["background"]
@@ -340,6 +358,11 @@ class MeshssiApp(CommandsMixin, App):
             w.styles.scrollbar_color_hover = t["dim"]
             w.styles.scrollbar_color_active = t["dim"]
         self.query_one("#log2").styles.border_bottom = ("solid", t["sidebar_border"])
+        for sel in ("#windows", "#toolbar"):
+            w = self.query_one(sel)
+            w.styles.background, w.styles.color = t["sidebar_bg"], t["foreground"]
+        self.query_one("#windows").styles.border_right = ("solid", t["sidebar_border"])
+        self.query_one("#hints").styles.border_top = ("solid", t["sidebar_border"])
         nl = self.query_one("#nicklist")
         nl.styles.background = t["sidebar_bg"]
         nl.styles.color = t["foreground"]
@@ -381,12 +404,13 @@ class MeshssiApp(CommandsMixin, App):
                     click = Style.from_meta({"@click": f"app.hops('{rec.get('id', '')}')"})  # click: route + trace
                     line.append(f"{h:>2}»", Style.parse(t["meta"] if h else t["good"]) + click)
                     line.append(" ")
+            who = easy.click(f"app.nick_clicked('{rec.get('id', '')}')")  # click a name: its node card
             if rec.get("own"):
                 line.append("<", t["timestamp"]).append(nick, t["own_nick"]).append("> ", t["timestamp"])
             elif rec.get("hl"):
-                line.append("<", t["timestamp"]).append(nick, t["hilight"]).append("> ", t["timestamp"])
+                line.append("<", t["timestamp"]).append(nick, Style.parse(t["hilight"]) + who).append("> ", t["timestamp"])
             else:
-                line.append("<", t["timestamp"]).append(nick, self.nick_color(nick)).append("> ", t["timestamp"])
+                line.append("<", t["timestamp"]).append(nick, Style.parse(self.nick_color(nick)) + who).append("> ", t["timestamp"])
             self._head = len(line.plain)
             body = Text()
             self._append_body(body, clean(rec.get("text", "")), t["hilight_text"] if rec.get("hl") else "")
@@ -551,7 +575,13 @@ class MeshssiApp(CommandsMixin, App):
         log2.scroll_end(animate=False)
 
     def on_resize(self) -> None:
-        self.call_after_refresh(self.redraw)
+        self.relayout()
+
+    def relayout(self) -> None:
+        """Re-wrap the chat once panes have their new widths (after a resize or a sidebar appearing)."""
+        if getattr(self, "_relayout", None):
+            self._relayout.stop()
+        self._relayout = self.set_timer(0.05, self.redraw)
 
     def on_app_focus(self, event: events.AppFocus) -> None:
         self.term_focused = True
@@ -631,6 +661,8 @@ class MeshssiApp(CommandsMixin, App):
         if mv:
             bar.append(*br).append(f"bat {mv / 1000:.2f}V").append(*er)
         self.query_one("#statusbar", Static).update(bar)
+        if self.query_one("#windows").display:
+            self.query_one("#windows", Static).update(easy.render_window_list(self))
 
     def refresh_nicklist(self) -> None:
         w = self.win
@@ -638,8 +670,10 @@ class MeshssiApp(CommandsMixin, App):
         dim = self.st["dim"]
         if w.kind == "channel":
             out.append(f"heard in {w.name}\n", "bold underline")
+            self._nick_targets = []
             for nick, ts in sorted(w.speakers.items(), key=lambda kv: -kv[1]):
-                out.append(clean(nick), self.nick_color(nick)).append(f"  {ago(ts).replace(' ago', '')}\n", dim)
+                self._nick_targets.append(nick)
+                out.append(clean(nick), Style.parse(self.nick_color(nick)) + easy.click(f"app.node_idx({len(self._nick_targets) - 1})")).append(f"  {ago(ts).replace(' ago', '')}\n", dim)
         elif w.kind == "query" and (c := self.contact(w.pubkey)):
             out.append(f"{c['adv_name']}\n", "bold underline")
             out.append(f"type   {CONTACT_TYPES.get(c['type'])}\n")
@@ -659,14 +693,15 @@ class MeshssiApp(CommandsMixin, App):
             out.append(f"contacts ({len(contacts)})\n", "bold underline")
             for c in contacts:
                 out.append(TYPE_GLYPH.get(c["type"], "?") + " ", dim)
-                out.append(c["adv_name"], self.nick_color(c["adv_name"]))
+                out.append(c["adv_name"], Style.parse(self.nick_color(c["adv_name"])) + easy.click(f"app.node_key('{c['public_key']}')"))
                 out.append(f"  {ago(c.get('last_advert')).replace(' ago', '')}\n", dim)
             others = [h for k, h in self.heard.items() if not (self.mc and k in self.mc.contacts)]
             if others:
                 out.append(f"\nheard, not added ({len(others)})\n", "bold underline")
                 for h in sorted(others, key=lambda h: -h.get("last", 0))[:30]:
+                    hk = next((k for k, v in self.heard.items() if v is h), "")
                     out.append(TYPE_GLYPH.get(h.get("type"), "?") + " ", dim)
-                    out.append(h["name"], dim).append(f"  {ago(h.get('last')).replace(' ago', '')}\n", dim)
+                    out.append(h["name"], Style.parse(dim) + easy.click(f"app.node_key('{hk}')")).append(f"  {ago(h.get('last')).replace(' ago', '')}\n", dim)
         self.query_one("#nicklist", Static).update(out)
 
     def route_names(self, hashes: list[str]) -> str:
@@ -766,7 +801,7 @@ class MeshssiApp(CommandsMixin, App):
     def action_toggle_nicklist(self) -> None:
         nl = self.query_one("#nicklist")
         nl.display = not nl.display
-        self.call_after_refresh(self.redraw)
+        self.relayout()
 
     def find_window(self, key: str) -> Window | None:
         return next((w for w in self.windows if w.key == key), None)
@@ -1432,11 +1467,98 @@ class MeshssiApp(CommandsMixin, App):
     # ── input & sending ───────────────────────────────────────────────────
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         self.refresh_counter()
+        self.refresh_hints()
         inp = event.text_area
         rows = max(1, inp.wrapped_document.height)
         if rows != getattr(inp, "_rows", 1):  # the prompt grew or shrank: repaint everything above it too
             inp._rows = rows
             self.call_after_refresh(self.screen.refresh, layout=True)
+
+    def refresh_hints(self) -> None:
+        hints = self.query_one("#hints", Static)
+        text = easy.hint_for(self, self.query_one("#input", PromptInput).value) if self.cfg.get("ui.hints", True) else None
+        hints.display = text is not None
+        if text is not None:
+            hints.update(text)
+
+    # ── the friendlier layer ──────────────────────────────────────────────
+    def apply_layout(self) -> None:
+        on = self.cfg.get("ui.layout", "classic") == "easy"
+        self.query_one("#toolbar").display = on
+        self.query_one("#keyhints").display = on
+        self.query_one("#windows").display = on or getattr(self, "_windows_forced", False)
+        if on:
+            self.query_one("#keyhints", Static).update(easy.key_hints(self))
+        self.refresh_statusbar()
+        self.relayout()
+
+    def action_toggle_windows(self) -> None:
+        w = self.query_one("#windows")
+        w.display = not w.display
+        self._windows_forced = w.display
+        self.refresh_statusbar()
+        self.relayout()
+
+    def action_fill(self, text: str) -> None:
+        inp = self.query_one("#input", PromptInput)
+        inp.value = text
+        inp.focus()
+
+    def action_pick_command(self, name: str) -> None:
+        self.action_fill(f"/{name} ")
+
+    def action_pick_contact(self, key: str) -> None:
+        c = self.contact(key)
+        if not c:
+            return
+        inp = self.query_one("#input", PromptInput)
+        cmd = inp.value.split(" ", 1)[0]
+        name = c["adv_name"]
+        self.action_fill(f"{cmd} {chr(34) + name + chr(34) if ' ' in name else name} ")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if not (event.button.id or "").startswith("tb"):
+            return
+        _, what = easy.TOOLBAR[int(event.button.id[2:])]
+        if what.startswith("fill:"):
+            self.action_fill(what[5:])
+        elif what == "palette":
+            self.action_command_palette()
+        else:
+            self.run_worker(self.run_command(what), group="toolbar")
+
+    def open_card(self, name: str = "", key: str = "") -> None:
+        mc = self.mc
+        contact = mc.contacts.get(key) if (mc and key) else None
+        if not contact and mc and name:
+            exact = [c for c in mc.contacts.values() if c["adv_name"] == name]
+            contact = exact[0] if len(exact) == 1 else None
+        heard = self.heard.get(key) if key else None
+        if not heard and name:
+            heard = next((h for h in self.heard.values() if h.get("name") == name), None)
+        pending = None
+        if mc:
+            pending = next((p for p in mc.pending_contacts.values()
+                            if p["public_key"] == key or (name and p["adv_name"] == name)), None)
+        name = name or (contact or {}).get("adv_name") or (heard or {}).get("name") or (pending or {}).get("adv_name") or key[:12]
+        if name == self.my_name:
+            return
+        self.push_screen(easy.NodeCard(self, name, contact, heard, pending))
+
+    def action_nick_clicked(self, rec_id: str) -> None:
+        for w in (self.win, self.split_win):
+            for r in (w.recs if w else []):
+                if r.get("id") == rec_id:
+                    self.open_card(name=r.get("nick", ""))
+                    return
+
+    def action_node_idx(self, i: int) -> None:
+        targets = getattr(self, "_nick_targets", [])
+        if 0 <= i < len(targets):
+            self.open_card(name=targets[i])
+
+    def action_node_key(self, key: str) -> None:
+        self.open_card(key=key)
 
     def refresh_counter(self) -> None:
         """Bytes used of the packet limit, colour-coded as it fills, and how many packets it'll go as."""

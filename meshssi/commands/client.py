@@ -156,6 +156,18 @@ async def c_theme(app, args):
     app.echo(f"Theme set to {args} ({names.index(args) + 1}/{len(names)}).", "ok")
 
 
+@command("layout", "client", "/layout [classic|easy]", "Classic irssi layout, or easy: window list, toolbar and key hints")
+async def c_layout(app, args):
+    if args not in ("classic", "easy"):
+        app.echo(f"Layout is {app.cfg.get('ui.layout', 'classic')}. /layout easy adds a clickable window list, a toolbar "
+                 "and key hints; /layout classic goes back to irssi style.")
+        return
+    app.cfg["ui"]["layout"] = args
+    app.cfg.save()
+    app.apply_layout()
+    app.echo(f"Layout: {args}.", "ok")
+
+
 @command("alias", "client", "/alias [name [/command args...]]", "Define a shortcut ($* = the arguments); no args lists them")
 async def c_alias(app, args):
     name, _, body = args.partition(" ")

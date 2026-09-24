@@ -275,3 +275,65 @@ def test_clicking_a_hop_count_names_the_route_and_traces_it():
             await app.action_quit()
 
     asyncio.run(run())
+
+
+def test_easy_layer_cards_hints_palette_and_layout():
+    from textual.widgets import Button, RichLog
+
+    from meshssi.easy import MeshCommands, NodeCard
+
+    async def run():
+        app = DemoApp(live=False)
+        async with app.run_test(size=(140, 44)) as pilot:
+            await boot(pilot, app)
+            pub = app.find_window("chan:Public")
+            app.switch(app.windows.index(pub))
+            await pilot.pause(0.3)
+            # click a nick in the chat log -> node card with actions for that person
+            log = app.query_one("#log", RichLog)
+            rec = next(r for r in pub.recs if r.get("nick") == "bramble")
+            idx = next(i for i, st in enumerate(log.lines) if rec["text"][:20] in st.text)
+            col = log.lines[idx].text.index("<bramble>") + 2
+            await pilot.click("#log", offset=(col + 1, idx - int(log.scroll_offset.y)))
+            await pilot.pause(0.3)
+            card = app.screen
+            assert isinstance(card, NodeCard) and card.node_name == "bramble"
+            labels = [b.label.plain for b in card.query(Button)]
+            assert "Message" in labels and "Whois" in labels and "Close" in labels
+            await pilot.click(next(b for b in card.query(Button) if b.label.plain == "Message"))
+            await pilot.pause(0.4)
+            assert not isinstance(app.screen, NodeCard) and app.win.name == "bramble"
+            # a repeater's card offers repeater actions; "Log in…" pre-fills the input for the password
+            app.open_card(key=BY_NAME["Ridgeline Rpt"]["public_key"])
+            await pilot.pause(0.3)
+            labels = [b.label.plain for b in app.screen.query(Button)]
+            assert {"Log in…", "Status", "Neighbours", "Watch"} <= set(labels)
+            await pilot.click(next(b for b in app.screen.query(Button) if b.label.plain == "Log in…"))
+            await pilot.pause(0.3)
+            assert app.query_one("#input").value == '/login "Ridgeline Rpt" '
+            # hints while typing a command
+            inp = app.query_one("#input")
+            inp.value = "/tr"
+            await pilot.pause(0.2)
+            hints = app.query_one("#hints")
+            assert hints.display and "/trace" in str(hints.render())
+            inp.value = "/whois "
+            await pilot.pause(0.2)
+            assert "Ridgeline Rpt" in str(hints.render())  # contact suggestions for the argument
+            inp.value = "hello"
+            await pilot.pause(0.2)
+            assert not hints.display
+            # the palette knows every command
+            provider = MeshCommands(app.screen)
+            found = sorted([h async for h in provider.search("neighbours")], key=lambda h: -h.score)
+            assert found and "neighbours" in found[0].text
+            # easy layout: window list, toolbar and key hints appear, and window names are clickable
+            await app.run_command("layout easy")
+            await pilot.pause(0.3)
+            assert app.query_one("#windows").display and app.query_one("#toolbar").display
+            await app.run_command("layout classic")
+            await pilot.pause(0.2)
+            assert not app.query_one("#windows").display
+            await app.action_quit()
+
+    asyncio.run(run())
