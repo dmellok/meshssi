@@ -7,7 +7,20 @@ Copy to ~/.config/meshssi/plugins/. Settings (config.toml):
 """
 
 
+import time
+
+
 def setup(api):
+    last: dict[str, float] = {}
+
+    def cooled(who: str) -> bool:
+        """One answer per person per minute: channel replies flood the mesh."""
+        now = time.time()
+        if now - last.get(who, 0) < 60:
+            return False
+        last[who] = now
+        return True
+
     def describe(rec):
         hops = rec.get("hops")
         route = "direct" if hops in (0, 255, None) else f"{hops} hop{'s' if hops > 1 else ''}"
@@ -16,13 +29,13 @@ def setup(api):
 
     @api.on("dm")
     async def dm(win, rec, contact):
-        if rec["text"].strip().lower() == "!ping":
+        if rec["text"].strip().lower() == "!ping" and cooled(rec["nick"]):
             await api.reply(win, describe(rec))
 
     @api.on("channel_message")
     async def channel(win, rec):
         allowed = api.config.get("channels", ["#test"])
-        if win.name in allowed and rec["text"].strip().lower() == "!ping":
+        if win.name in allowed and rec["text"].strip().lower() == "!ping" and cooled(rec["nick"]):
             await api.reply(win, f"@[{rec['nick']}] {describe(rec)}")
 
     @api.command("pingbot", "Show which channels the ping bot answers in")

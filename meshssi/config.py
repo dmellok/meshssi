@@ -33,8 +33,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "highlights": [],  # extra words that highlight a channel line
         "ignores": [],  # nick glob patterns to hide
         "away_message": "",
-        "dm_retries": 3,  # attempts before giving up on a DM
-        "flood_after": 2,  # attempts before resetting the route and flooding
+        "dm_retries": 3,  # attempts before giving up on a DM (at most 4, and at most 2 of them flooded)
+        "flood_after": 2,  # attempts on the stored route before flooding
         "emoji_shortcodes": True,  # :thumbs_up: -> 👍 when sending
     },
     "notify": {
@@ -44,7 +44,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "device": {
         "auto_time_sync": True,  # fix the radio clock on connect if it drifted
-        "advert_interval": 0,  # minutes between automatic adverts, 0 = off
+        "advert_interval": 0,  # minutes between automatic adverts, 0 = off (at least 30; 360 if advert_flood)
         "advert_flood": False,
     },
     "map": {
@@ -53,7 +53,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "tiles": "https://tiles.openfreemap.org/planet",  # TileJSON URL or a {z}/{x}/{y} template (MVT)
     },
     "dashboard": {
-        "interval": 10,  # minutes between status polls of /watch'ed repeaters
+        "interval": 15,  # minutes between status polls of /watch'ed repeaters (at least 15)
         "watch": [],  # repeater names or key prefixes
     },
     "daemon": {

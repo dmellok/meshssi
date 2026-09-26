@@ -234,7 +234,7 @@ async def c_watch(app, args):
     app.save_state()
     win = app.special_window("view", "dash")
     app.switch(app.windows.index(win))
-    app.run_worker(app.poll_repeater(c["public_key"]), group=f"dash-{c['public_key']}")
+    app.run_worker(app.poll_repeater(c["public_key"], manual=True), group=f"dash-{c['public_key']}")
 
 
 @command("unwatch", "remote", "/unwatch <repeater>", "Remove a repeater from the dashboard")
@@ -248,7 +248,14 @@ async def c_unwatch(app, args):
 
 @command("dash", "remote", "/dash [refresh]", "Open the repeater dashboard; refresh polls every watched repeater now")
 async def c_dash(app, args):
-    if args == "refresh":
-        for key in app.dash:
-            app.run_worker(app.poll_repeater(key), group=f"dash-{key}")
+    if args == "refresh":  # you asked, so no budget; still one at a time, never flooding
+        async def poll_all():
+            for key in list(app.dash):
+                c = app.contact(key)
+                if c and c.get("out_path_len", -1) < 0:
+                    app.echo(f"Skipping {c['adv_name']}: no stored route, so it would flood. /rstatus it if you mean it.")
+                    continue
+                await app.poll_repeater(key, manual=True)
+
+        app.run_worker(poll_all(), group="dash-refresh")
     app.switch(app.windows.index(app.special_window("view", "dash")))

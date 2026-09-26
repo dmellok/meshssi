@@ -255,6 +255,20 @@ It degrades gracefully:
 - **Opting out:** `/map basemap off` turns the background off entirely.
 - **Other tile sources:** `map.tiles` in the config accepts any OpenMapTiles-schema TileJSON URL or `{z}/{x}/{y}.pbf` template.
 
+## Airtime
+
+LoRa meshes are shared and slow, so meshssi keeps what it sends on its own to a minimum. Things you type are sent as asked, except that messages over 3 packets, and a second flood advert within 30 minutes, ask first. Automatic traffic is capped however it's configured:
+
+| What | Limit |
+|---|---|
+| DM retries | at most 4 attempts per message, at most 2 of them flooded |
+| Scheduled adverts | every 30 min at most (zero-hop), 6 h (flood); off by default |
+| Repeater dashboard | each repeater every 15 min at most, one per minute; never without a route (it would flood); backs off when unanswered |
+| Room auto-login | once per room per 30 min, however often the connection drops |
+| Away replies and plugins | 3 a minute, 30 an hour in total, single packets only |
+
+Traces, and clicking a hop count, follow the route rather than flooding. Path discovery (`/path`) and `/advert flood` do flood, but only when you ask.
+
 ## Configuration
 
 `~/.config/meshssi/config.toml` is created on first run with every setting and its default. Change settings there or live with `/set section.key value`; `/set` alone lists everything, and `/set key -default` resets one. Highlights:
@@ -269,7 +283,7 @@ It degrades gracefully:
 | `notify.desktop` / `notify.only_when_unfocused` | on / on | or `/notify` |
 | `device.auto_time_sync` | on | fix the radio clock on connect |
 | `device.advert_interval` | 0 | minutes between automatic adverts, or `/advert every N` |
-| `dashboard.interval` / `dashboard.watch` | 10 / `[]` | repeater polling (each poll transmits) |
+| `dashboard.interval` / `dashboard.watch` | 15 / `[]` | repeater polling (each poll transmits; 15 min minimum) |
 | `map.basemap` / `map.style` / `map.tiles` | on / braille / OpenFreeMap | the OpenStreetMap background (see [The map](#the-map)) |
 | `[rooms]` | | room name = password, for auto-login (`/room … -save`) |
 | `[aliases]` | `j`, `ll`, `wii` | or `/alias` |

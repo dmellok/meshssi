@@ -31,6 +31,15 @@ CONTACT_TYPES = {0: "?", 1: "chat", 2: "repeater", 3: "room", 4: "sensor"}
 TYPE_GLYPH = {1: "@", 2: "R", 3: "#", 4: "S"}
 MAX_TEXT = 150  # bytes per mesh text packet, leaving headroom under the firmware's 160
 
+# Airtime limits. Everything that transmits without you typing a command goes through these, so meshssi
+# can't flood the mesh on its own, however it's configured.
+DM_MAX_ATTEMPTS = 4  # the packet's attempt counter is 2 bits; later attempts would be duplicates
+DM_MAX_FLOODS = 2  # flooded DM attempts per message chunk (the meshcore library's own limit)
+MIN_ADVERT_MINUTES = {False: 30, True: 360}  # scheduled adverts: zero-hop / flood
+MIN_POLL_MINUTES = 15  # repeater dashboard polls, per repeater
+ROOM_RELOGIN_MINUTES = 30  # automatic room logins after reconnects
+AUTO_TX_PER_MINUTE, AUTO_TX_PER_HOUR = 3, 30  # automatic sends: away replies, plugins, polls, room logins
+
 
 @dataclass
 class Window:
@@ -240,6 +249,8 @@ class MeshssiApp(CommandsMixin, App):
         self.plugins = PluginManager(self)
         self._head = 0
         self.resolve_error = ""
+        self._poll_backoff: dict[str, int] = {}
+        self._room_login: dict[str, float] = {}
 
     # ── layout ────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -310,6 +321,20 @@ class MeshssiApp(CommandsMixin, App):
                 self.log(f"timer {fn.__name__}: {e!r}")
 
         return tick
+
+    def allow_auto_tx(self, what: str) -> bool:
+        """Budget for transmissions nobody typed (away replies, plugins, polls, logins, scheduled adverts)."""
+        now = time.time()
+        self._auto_tx = [t for t in getattr(self, "_auto_tx", []) if now - t < 3600]
+        recent = sum(1 for t in self._auto_tx if now - t < 60)
+        if recent >= AUTO_TX_PER_MINUTE or len(self._auto_tx) >= AUTO_TX_PER_HOUR:
+            if now - getattr(self, "_auto_tx_warned", 0) > 300:
+                self._auto_tx_warned = now
+                self.status(f"Holding back automatic transmissions ({what}): more than {AUTO_TX_PER_MINUTE}/min or "
+                            f"{AUTO_TX_PER_HOUR}/hour would load the mesh. Things you type still send.", "error")
+            return False
+        self._auto_tx.append(now)
+        return True
 
     async def mesh_request(self, fn, *args, **kwargs):
         """Run a meshcore request that sends, gets MSG_SENT back, then waits (possibly many seconds) for the
@@ -1200,18 +1225,21 @@ class MeshssiApp(CommandsMixin, App):
         if not self.connected:
             return
         every = int(self.cfg.get("device.advert_interval", 0) or 0)
-        if every and time.time() - self.last_advert >= every * 60:
+        flood = bool(self.cfg.get("device.advert_flood"))
+        if every > 0:
+            every = max(every, MIN_ADVERT_MINUTES[flood])
+        if every and time.time() - self.last_advert >= every * 60 and self.allow_auto_tx("scheduled advert"):
             async with self.io:
-                await self.mc.commands.send_advert(flood=bool(self.cfg.get("device.advert_flood")))
+                await self.mc.commands.send_advert(flood=flood)
             self.last_advert = time.time()
             self.add(self.windows[0], {"k": "notice", "text": "Sent scheduled advert.", "lvl": "dim"}, activity=0)
         cutoff = time.time() - 3600  # forget acks we've waited an hour for
         for code in [k for k, v in self.acks.items() if v[3] < cutoff]:
             self.acks.pop(code, None)
-        interval = max(1.0, float(self.cfg.get("dashboard.interval", 10))) * 60
-        for key, (t, _) in list(self.dash.items()):
-            if time.time() - t >= interval:
-                self.run_worker(self.poll_repeater(key), group=f"dash-{key}")
+        interval = max(MIN_POLL_MINUTES, float(self.cfg.get("dashboard.interval", 15) or 15)) * 60
+        due = [k for k, (t, _) in self.dash.items() if time.time() - t >= interval * self._poll_backoff.get(k, 1)]
+        if due:  # one repeater per minute, so a long watch list is spread out rather than sent in a burst
+            self.run_worker(self.poll_repeater(due[0]), group=f"dash-{due[0]}")
         self.save_heard()
 
     def save_heard(self) -> None:
@@ -1220,18 +1248,28 @@ class MeshssiApp(CommandsMixin, App):
             state["heard"] = dict(sorted(self.heard.items(), key=lambda kv: -kv[1].get("last", 0))[:500])
             self.store.save_state(state)
 
-    async def poll_repeater(self, key: str) -> None:
+    async def poll_repeater(self, key: str, manual: bool = False) -> None:
         c = self.contact(key)
         if not c:
             return
         self.dash[key] = (time.time(), self.dash.get(key, (0, None))[1])
+        if not manual:
+            if c.get("out_path_len", -1) < 0:  # no route: the request would flood the whole mesh
+                self.add(self.windows[0], {"k": "notice", "lvl": "dim", "text": f"(dash) not polling {c['adv_name']}: no "
+                                           f"stored route, so it would flood. /path {c['adv_name']} finds one."}, activity=0)
+                return
+            if not self.allow_auto_tx("repeater poll"):
+                return
         st = await self.mesh_request(self.mc.commands.req_status_sync, c)
         if key not in self.dash:  # /unwatch'ed while we waited
             return
         self.dash[key] = (time.time(), st if st else self.dash[key][1])
-        if st is None:
-            self.add(self.windows[0], {"k": "notice", "text": f"(dash) no status reply from {c['adv_name']}",
-                                       "lvl": "dim"}, activity=0)
+        if st is None:  # back off an unreachable repeater: 2x, 4x... up to 16x the interval
+            self._poll_backoff[key] = min(16, self._poll_backoff.get(key, 1) * 2)
+            self.add(self.windows[0], {"k": "notice", "text": f"(dash) no status reply from {c['adv_name']}; "
+                                       f"polling it less often", "lvl": "dim"}, activity=0)
+        else:
+            self._poll_backoff.pop(key, None)
 
     async def auto_login_rooms(self) -> None:
         """Log into saved rooms. Only an exact key match that is a room server gets the password, so a node
@@ -1243,6 +1281,11 @@ class MeshssiApp(CommandsMixin, App):
                 c = named[0] if len(named) == 1 else None
             if not c or c.get("type") != 3:
                 continue
+            if time.time() - self._room_login.get(c["public_key"], 0) < ROOM_RELOGIN_MINUTES * 60:
+                continue  # a flapping connection must not turn into a stream of logins
+            if not self.allow_auto_tx("room login"):
+                return
+            self._room_login[c["public_key"]] = time.time()
             ev = await self.mesh_request(self.mc.commands.send_login_sync, c, str(pwd))
             ok = ev is not None and ev.type == EventType.LOGIN_SUCCESS
             self.status(f"{'Logged into' if ok else 'Could not log into'} room {c['adv_name']}", "ok" if ok else "error",
@@ -1303,7 +1346,7 @@ class MeshssiApp(CommandsMixin, App):
         self.plugins.emit("dm", win=win, rec=rec, contact=c)
         if self.away is not None and c and c["type"] == 1 and c["public_key"] not in self.away_replied:
             self.away_replied.add(c["public_key"])
-            await self.say(win, f"[away] {self.away or 'not here right now'}")
+            await self.say(win, f"[away] {self.away or 'not here right now'}", auto=True)
 
     async def on_channel_msg(self, ev) -> None:
         p = dict(ev.payload, text=clean(ev.payload.get("text")))
@@ -1597,7 +1640,9 @@ class MeshssiApp(CommandsMixin, App):
         else:
             await self.say(self.win, line[1:] if line.startswith("//") else line)
 
-    async def say(self, win: Window, text: str) -> None:
+    async def say(self, win: Window, text: str, auto: bool = False) -> None:
+        """Send text to a channel or DM. auto=True for anything nobody typed (away replies, plugins): those
+        go through the automatic-transmission budget and are never split into several packets."""
         if win.kind not in ("channel", "query"):
             self.echo("Not a chat window. Use /join, /query or switch windows (alt+N, ctrl+n/p).", "error")
             return
@@ -1606,6 +1651,13 @@ class MeshssiApp(CommandsMixin, App):
             return
         if self.cfg.get("chat.emoji_shortcodes", True):
             text = expand_shortcodes(text)
+        limit = MAX_TEXT - len(self.my_name.encode()) - 2 if win.kind == "channel" else MAX_TEXT
+        parts = len(split_utf8(text, limit))
+        if auto:
+            if parts > 1 or not self.allow_auto_tx("automatic message"):
+                return
+        elif parts > 3 and not self.confirm(f"send this as {parts} separate packets to {win.name}"):
+            return
         if win.kind == "channel":
             limit = MAX_TEXT - len(self.my_name.encode()) - 2
             for chunk in split_utf8(text, limit):
@@ -1629,21 +1681,26 @@ class MeshssiApp(CommandsMixin, App):
 
     async def _deliver(self, win: Window, c: dict, recs: list[dict]) -> None:
         """Send DMs in order, retrying on missing acks and falling back to flood routing."""
-        retries = max(1, min(8, int(self.cfg.get("chat.dm_retries", 3))))
-        flood_after = int(self.cfg.get("chat.flood_after", 2))
+        retries = max(1, min(DM_MAX_ATTEMPTS, int(self.cfg.get("chat.dm_retries", 3))))
+        flood_after = max(1, int(self.cfg.get("chat.flood_after", 2)))
         for rec in recs:
             fut = asyncio.get_running_loop().create_future()
             ts = int(time.time())
+            floods = 0
             for attempt in range(retries):
                 if attempt and attempt == flood_after and c.get("out_path_len", -1) >= 0:
                     async with self.io:
                         await self.mc.commands.reset_path(c)
                     self.status(f"No ack from {c['adv_name']} on its stored route; flooding instead.", "dim", win=win)
+                if c.get("out_path_len", -1) < 0:  # this attempt goes to every repeater in range
+                    if floods >= DM_MAX_FLOODS:
+                        break
+                    floods += 1
                 async with self.io:
                     if not self.mc:
                         ev = None
                     else:
-                        ev = await self.mc.commands.send_msg(c, rec["text"], timestamp=ts, attempt=attempt % 4)
+                        ev = await self.mc.commands.send_msg(c, rec["text"], timestamp=ts, attempt=attempt)
                 if ev is None or ev.is_error():
                     for r in recs[recs.index(rec):]:  # this chunk and everything after it
                         self.set_delivery(win, r, "fail")

@@ -89,7 +89,7 @@ class PluginAPI:
             win = self.app.query_window(c)
         if win is None:
             raise ValueError(f"no window or contact called {target!r}")
-        await self.app.say(win, text)
+        await self.app.say(win, text, auto=True)  # rate-limited, so a plugin can't flood the mesh
 
     reply = say
 

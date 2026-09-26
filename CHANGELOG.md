@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: limits on automatic airtime
+An airtime review of everything meshssi transmits without you typing a command:
+- **DM retries** could flood the mesh up to 8 times for one unacknowledged message, repeated for every chunk of a long message. Now there are at most 4 attempts (the packet's attempt counter only has 4 values), and at most 2 of them flooded, matching the meshcore library.
+- **Scheduled adverts** could be set as low as every 5 minutes, even as flood adverts. The minimum is now 30 minutes for zero-hop and 6 hours for flood, enforced even if the config file asks for less.
+- **Repeater dashboard polls** could run every minute, all at once, and flooded the mesh for repeaters with no known route. Now:
+  - at least 15 minutes apart, one repeater per minute
+  - never for a repeater without a route
+  - backing off (up to 16×) when a repeater doesn't answer
+- **Room auto-login** re-ran on every reconnect, so a flapping connection sent a stream of logins. Now it's once per room per 30 minutes.
+- **Automatic messages** (away replies, plugins) share a budget of 3 a minute and 30 an hour, and are never split into several packets. So `!ping` spam can't make the example ping bot flood a channel, and the bot also answers each person at most once a minute.
+- **Long pastes:** a message that would go out as more than 3 packets asks first.
+- **Flood adverts:** sending a second flood advert within 30 minutes asks first.
+
 ## 0.4.0
 
 ### New

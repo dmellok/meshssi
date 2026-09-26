@@ -68,15 +68,24 @@ async def c_time(app, args):
 async def c_advert(app, args):
     if args.startswith("every"):
         val = args[5:].strip()
-        if val not in ("off", "0", "") and not (val.isdigit() and int(val) >= 5):
-            app.echo("Usage: /advert every <minutes, at least 5> or /advert every off", "error")
+        from ..app import MIN_ADVERT_MINUTES
+
+        least = MIN_ADVERT_MINUTES[bool(app.cfg.get("device.advert_flood"))]
+        if val not in ("off", "0", "") and not (val.isdigit() and int(val) >= least):
+            kind = "flood" if app.cfg.get("device.advert_flood") else "zero-hop"
+            app.echo(f"Usage: /advert every <minutes, at least {least} for {kind} adverts> or /advert every off", "error")
             return
         minutes = 0 if val in ("off", "0", "") else int(val)
         app.cfg["device"]["advert_interval"] = minutes
         app.cfg.save()
         app.echo(f"Automatic adverts: {'every ' + str(minutes) + ' min' if minutes else 'off'}.", "ok")
         return
+    if args == "flood" and time.time() - getattr(app, "_last_flood_advert", 0) < 1800 and not app.confirm(
+            "send another flood advert — every repeater relays it, and you sent one in the last 30 minutes"):
+        return
     await app.cmd(app.mc.commands.send_advert(flood=args == "flood"))
+    if args == "flood":
+        app._last_flood_advert = time.time()
     app.last_advert = time.time()
     app.echo(f"Sent {'flood' if args == 'flood' else 'zero-hop'} advert.", "ok")
 
