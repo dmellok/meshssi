@@ -362,3 +362,20 @@ def test_clickable_sidebar_keeps_name_colours():
             await app.action_quit()
 
     asyncio.run(run())
+
+
+def test_paste_inserts_once_on_one_line():
+    from textual import events
+
+    async def run():
+        app = DemoApp(live=False)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await boot(pilot, app)
+            inp = app.query_one("#input")
+            inp.value = "say: "
+            inp.post_message(events.Paste("hello\nworld"))
+            await pilot.pause(0.3)
+            assert inp.value == "say: hello world"
+            await app.action_quit()
+
+    asyncio.run(run())

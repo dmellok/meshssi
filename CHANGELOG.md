@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Pasting into the input line inserted the text twice (once joined onto one line, once with its line breaks). It now pastes once, on one line.
+
 ## 0.4.1
 
 ### Fixed: limits on automatic airtime

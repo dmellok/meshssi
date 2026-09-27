@@ -130,7 +130,10 @@ class PromptInput(TextArea):
         await super()._on_key(event)
 
     async def _on_paste(self, event: events.Paste) -> None:
+        # Textual runs _on_paste for every class in the chain; prevent_default stops TextArea's own
+        # handler from inserting the text a second time (with its line breaks)
         event.stop()
+        event.prevent_default()
         self.insert(" ".join(event.text.splitlines()))
 
     def action_cursor_up(self, select: bool = False) -> None:
