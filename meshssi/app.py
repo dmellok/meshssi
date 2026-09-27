@@ -38,7 +38,8 @@ DM_MAX_FLOODS = 2  # flooded DM attempts per message chunk (the meshcore library
 MIN_ADVERT_MINUTES = {False: 30, True: 360}  # scheduled adverts: zero-hop / flood
 MIN_POLL_MINUTES = 15  # repeater dashboard polls, per repeater
 ROOM_RELOGIN_MINUTES = 30  # automatic room logins after reconnects
-AUTO_TX_PER_MINUTE, AUTO_TX_PER_HOUR = 3, 30  # automatic sends: away replies, plugins, polls, room logins
+AUTO_TX_PER_MINUTE, AUTO_TX_PER_HOUR = 3, 30
+SPELL_PAUSE = 0.8  # seconds after your last keystroke before spell checking  # automatic sends: away replies, plugins, polls, room logins
 
 
 @dataclass
@@ -131,7 +132,7 @@ class PromptInput(TextArea):
 
     def _build_highlight_map(self) -> None:
         super()._build_highlight_map()
-        marks = self.app.spell_marks(self.text, self.cursor_location[1]) if self.is_mounted else []
+        marks = getattr(self, "spell_found", ())  # set by the check that runs when you pause typing
         if marks and self._theme is not None:
             self._theme.syntax_styles["misspelled"] = self.app.spell_style()
             text = self.text
@@ -1544,7 +1545,16 @@ class MeshssiApp(CommandsMixin, App):
     # ── input & sending ───────────────────────────────────────────────────
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         self.refresh_counter()
+        inp = event.text_area
+        if getattr(inp, "spell_found", None):  # offsets are stale once you edit: clear until the next check
+            inp.spell_found = []
+            inp._build_highlight_map()
+        self._spell_hint = None
         self.refresh_hints()
+        if getattr(self, "_spell_timer", None):
+            self._spell_timer.stop()
+        if self.cfg.get("ui.spellcheck", True) and inp.value.strip():
+            self._spell_timer = self.set_timer(SPELL_PAUSE, self._spell_check_idle)
         inp = event.text_area
         rows = max(1, inp.wrapped_document.height)
         if rows != getattr(inp, "_rows", 1):  # the prompt grew or shrank: repaint everything above it too
@@ -1577,6 +1587,25 @@ class MeshssiApp(CommandsMixin, App):
             self._spell_names_key = names_key
         return self._speller
 
+    async def _spell_check_idle(self) -> None:
+        """Runs once typing has paused: find misspelled words, and suggestions for the one at the cursor,
+        off the UI thread so it can never slow typing down."""
+        inp = self.query_one("#input", PromptInput)
+        text, cur = inp.value, inp.cursor_position
+        sp = self.speller
+        if sp is None:
+            return
+        marks = self.spell_marks(text, len(text) + 1)  # typing has paused: the last word counts too
+        hit = next(((a, b, text[a:b]) for a, b in marks if a <= cur <= b + 1), None)
+        sugg = await asyncio.to_thread(sp.suggestions, hit[2]) if hit else []
+        if inp.value != text:  # you typed again meanwhile: this result is stale
+            return
+        inp.spell_found = marks
+        inp._build_highlight_map()
+        inp.refresh()
+        self._spell_hint = (hit, sugg) if hit else None
+        self.refresh_hints()
+
     def spell_marks(self, text: str, cursor: int) -> list[tuple[int, int]]:
         sp = self.speller
         if sp is None or not text.strip() or (text.startswith("/") and not text.startswith("//")) \
@@ -1589,21 +1618,8 @@ class MeshssiApp(CommandsMixin, App):
 
         return RichStyle(underline=True, color=RichStyle.parse(self.st["bad"]).color)
 
-    def word_at_cursor(self) -> tuple[int, int, str] | None:
-        """The misspelled word the cursor is in or just after, if any."""
-        sp = self.speller
-        inp = self.query_one("#input", PromptInput)
-        text, cur = inp.value, inp.cursor_position
-        if sp is None or not text or (text.startswith("/") and not text.startswith("//")):
-            return None
-        for a, b, w in sp.misspelled(text):
-            if a <= cur <= b + 1:
-                return a, b, w
-        return None
-
     def action_spell_fix(self, i: int) -> None:
-        hit = self.word_at_cursor()
-        sugg = getattr(self, "_spell_sugg", [])
+        hit, sugg = getattr(self, "_spell_hint", None) or (None, [])
         if not hit or not (0 <= i < len(sugg)):
             return
         a, b, _ = hit
@@ -1614,19 +1630,20 @@ class MeshssiApp(CommandsMixin, App):
         inp.focus()
 
     def action_spell_learn(self) -> None:
-        hit = self.word_at_cursor()
+        hit, _ = getattr(self, "_spell_hint", None) or (None, [])
         if hit and self.speller:
             self.speller.learn(hit[2])
-            self.query_one("#input", PromptInput)._build_highlight_map()
-            self.query_one("#input", PromptInput).refresh()
+            inp = self.query_one("#input", PromptInput)
+            inp.spell_found = [m for m in getattr(inp, "spell_found", []) if inp.value[m[0]:m[1]].lower() != hit[2].lower()]
+            inp._build_highlight_map()
+            inp.refresh()
+            self._spell_hint = None
             self.refresh_hints()
 
     def spell_hint(self):
-        hit = self.word_at_cursor()
+        hit, sugg = getattr(self, "_spell_hint", None) or (None, [])
         if not hit:
             return None
-        sugg = self.speller.suggestions(hit[2])
-        self._spell_sugg = sugg
         t = self.st
         out = easy.ClickText(no_wrap=True, overflow="ellipsis")
         out.append(hit[2], self.spell_style())

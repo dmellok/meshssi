@@ -393,18 +393,18 @@ def test_spell_check_underlines_suggests_and_learns(tmp_path, monkeypatch):
             app.switch(app.windows.index(app.find_window("chan:Public")))
             inp = app.query_one("#input")
             await pilot.press(*"teh repeater lol bramble's ", "@", "[", *"Nora", "]", *" http://x.io/abc SNR ok")
-            await pilot.pause(0.2)
+            assert not getattr(inp, "spell_found", [])  # nothing is checked while you're typing
+            await pilot.pause(1.3)  # ...only once you pause
             marked = [inp.text.encode()[a:b].decode() for a, b, n in inp._highlights[0] if n == "misspelled"]
             assert marked == ["teh"]  # not slang, names, mentions, links or acronyms
             inp.cursor_position = 1
-            app.refresh_hints()
-            await pilot.pause(0.1)
+            await app._spell_check_idle()
             assert "the" in str(app.query_one("#hints").render())
             app.action_spell_fix(0)
             assert inp.value.startswith("the repeater")
-            inp.value = "hi zorblax "
-            await pilot.pause(0.1)
+            inp.value = "hi zorblax"
             inp.cursor_position = 5
+            await app._spell_check_idle()
             app.action_spell_learn()
             assert app.speller.known("zorblax") and "zorblax" in (tmp_path / "words.txt").read_text()
             inp.value = "/msg teh"  # commands aren't checked
