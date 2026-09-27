@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### New
+- **Spell check** for messages you type. Offline, in 12 languages (`/spell lang de`, etc.).
+  - Misspelled words are underlined as you type. The row above the input offers corrections to click, or press Tab to cycle through them.
+  - It never flags contact, channel or node names, @mentions, links, `:shortcodes:`, acronyms like SNR, or common chat and mesh words (lol, arvo, repeater, colinear…). Commands aren't checked.
+  - `/spell add <word>` (or "add to dictionary" in the hints) teaches it words, saved in `~/.config/meshssi/words.txt`. `/spell off` turns it off.
+- **Clicks keep you typing.** Clicking the chat, sidebar, status bar or toolbar no longer takes focus from the input line.
+
 ### Fixed
 - Pasting into the input line inserted the text twice (once joined onto one line, once with its line breaks). It now pastes once, on one line.
 

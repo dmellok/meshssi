@@ -168,6 +168,43 @@ async def c_layout(app, args):
     app.echo(f"Layout: {args}.", "ok")
 
 
+@command("spell", "client", "/spell [on|off|lang <code>|add <word>|remove <word>|list]",
+         "Spell checking for messages you type: underlines, suggestions, your own dictionary")
+async def c_spell(app, args):
+    from ..spelling import LANGUAGES, WORDS_FILE
+
+    word, _, rest = args.partition(" ")
+    if word in ("on", "off"):
+        app.cfg["ui"]["spellcheck"] = word == "on"
+        app.cfg.save()
+        app.echo(f"Spell check {word}.", "ok")
+    elif word == "lang":
+        if rest not in LANGUAGES:
+            app.echo(f"Languages: {', '.join(LANGUAGES)}", "error")
+            return
+        app.cfg["ui"]["spell_language"] = rest
+        app.cfg.save()
+        app.echo(f"Spell check language: {rest}.", "ok")
+    elif word in ("add", "remove") and rest and app.speller:
+        if word == "add":
+            app.speller.learn(rest)
+            app.echo(f"Added {rest!r} to your dictionary ({WORDS_FILE}).", "ok")
+        elif app.speller.forget(rest):
+            app.echo(f"Removed {rest!r} from your dictionary.", "ok")
+        else:
+            app.echo(f"{rest!r} isn't in your dictionary.", "error")
+    elif word == "list" and app.speller:
+        words = sorted(app.speller.personal)
+        app.echo(f"Your dictionary ({len(words)}): {', '.join(words) or '(empty)'}")
+    else:
+        on = app.cfg.get("ui.spellcheck", True)
+        app.echo(f"Spell check is {'on' if on else 'off'} ({app.cfg.get('ui.spell_language', 'en')}). Misspelled words are "
+                 "underlined as you type; the hints row offers fixes (click, or Tab to cycle). "
+                 "/spell add <word> teaches it a word.")
+    app.query_one("#input")._build_highlight_map()
+    app.query_one("#input").refresh()
+
+
 @command("alias", "client", "/alias [name [/command args...]]", "Define a shortcut ($* = the arguments); no args lists them")
 async def c_alias(app, args):
     name, _, body = args.partition(" ")

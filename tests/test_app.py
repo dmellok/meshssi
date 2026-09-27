@@ -379,3 +379,53 @@ def test_paste_inserts_once_on_one_line():
             await app.action_quit()
 
     asyncio.run(run())
+
+
+def test_spell_check_underlines_suggests_and_learns(tmp_path, monkeypatch):
+    import meshssi.spelling as spelling
+
+    monkeypatch.setattr(spelling, "WORDS_FILE", tmp_path / "words.txt")
+
+    async def run():
+        app = DemoApp(live=False)
+        async with app.run_test(size=(110, 30)) as pilot:
+            await boot(pilot, app)
+            app.switch(app.windows.index(app.find_window("chan:Public")))
+            inp = app.query_one("#input")
+            await pilot.press(*"teh repeater lol bramble's ", "@", "[", *"Nora", "]", *" http://x.io/abc SNR ok")
+            await pilot.pause(0.2)
+            marked = [inp.text.encode()[a:b].decode() for a, b, n in inp._highlights[0] if n == "misspelled"]
+            assert marked == ["teh"]  # not slang, names, mentions, links or acronyms
+            inp.cursor_position = 1
+            app.refresh_hints()
+            await pilot.pause(0.1)
+            assert "the" in str(app.query_one("#hints").render())
+            app.action_spell_fix(0)
+            assert inp.value.startswith("the repeater")
+            inp.value = "hi zorblax "
+            await pilot.pause(0.1)
+            inp.cursor_position = 5
+            app.action_spell_learn()
+            assert app.speller.known("zorblax") and "zorblax" in (tmp_path / "words.txt").read_text()
+            inp.value = "/msg teh"  # commands aren't checked
+            await pilot.pause(0.1)
+            assert app.spell_marks(inp.value, 0) == []
+            await app.action_quit()
+
+    asyncio.run(run())
+
+
+def test_clicking_anywhere_keeps_typing_in_the_input():
+    async def run():
+        app = DemoApp(live=False)
+        async with app.run_test(size=(120, 36)) as pilot:
+            await boot(pilot, app)
+            inp = app.query_one("#input")
+            for target in ("#log", "#nicklist", "#statusbar"):
+                app.set_focus(None)
+                await pilot.click(target, offset=(3, 0))
+                await pilot.pause(0.2)
+                assert app.focused is inp, target
+            await app.action_quit()
+
+    asyncio.run(run())

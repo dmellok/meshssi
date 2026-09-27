@@ -129,6 +129,15 @@ class PromptInput(TextArea):
             return
         await super()._on_key(event)
 
+    def _build_highlight_map(self) -> None:
+        super()._build_highlight_map()
+        marks = self.app.spell_marks(self.text, self.cursor_location[1]) if self.is_mounted else []
+        if marks and self._theme is not None:
+            self._theme.syntax_styles["misspelled"] = self.app.spell_style()
+            text = self.text
+            for start, end in marks:  # TextArea highlights are byte offsets
+                self._highlights[0].append((len(text[:start].encode()), len(text[:end].encode()), "misspelled"))
+
     async def _on_paste(self, event: events.Paste) -> None:
         # Textual runs _on_paste for every class in the chain; prevent_default stops TextArea's own
         # handler from inserting the text a second time (with its line breaks)
@@ -277,6 +286,10 @@ class MeshssiApp(CommandsMixin, App):
         yield Static(id="keyhints")
 
     def on_mount(self) -> None:
+        # nothing on the main screen but the input takes keyboard focus: clicking the chat, sidebar or
+        # toolbar leaves you typing where you were
+        for w in self.query("RichLog, #view, #nicklist, #windows, #hints, #topic, #statusbar, #toolbar Button"):
+            w.can_focus = False
         self.query_one("#log2").display = False
         self.query_one("#view").display = False
         self.query_one("#nicklist").display = bool(self.cfg.get("ui.nicklist", True))
@@ -612,6 +625,17 @@ class MeshssiApp(CommandsMixin, App):
         if getattr(self, "_relayout", None):
             self._relayout.stop()
         self._relayout = self.set_timer(0.05, self.redraw)
+
+    def on_click(self, event: events.Click) -> None:
+        """A click that isn't on something clickable puts the cursor back in the input."""
+        self.call_after_refresh(self._refocus_input)
+
+    def _refocus_input(self) -> None:
+        if len(self.screen_stack) > 1:  # a card or the command palette is open: leave focus with it
+            return
+        inp = self.query_one("#input", PromptInput)
+        if self.focused is not inp:
+            inp.focus()
 
     def on_app_focus(self, event: events.AppFocus) -> None:
         self.term_focused = True
@@ -1041,6 +1065,11 @@ class MeshssiApp(CommandsMixin, App):
                 if self.win.kind == "channel" and at_start and start == 0:
                     return start, [f"@[{h}] " for h in hits], 0
                 return start, [h + " " for h in hits], 0
+        if at_start and self.speller:  # no name matched: offer spelling corrections for the last word
+            word_start = before.rfind(" ") + 1
+            word = before[word_start:]
+            if word and not self.speller.known(word) and word.isalpha():
+                return word_start, [w + " " for w in self.speller.suggestions(word)], 0
         return 0, [], 0
 
     # ── connection & device events ────────────────────────────────────────
@@ -1522,9 +1551,102 @@ class MeshssiApp(CommandsMixin, App):
             inp._rows = rows
             self.call_after_refresh(self.screen.refresh, layout=True)
 
+    # ── spelling ──────────────────────────────────────────────────────────
+    @property
+    def speller(self):
+        if not self.cfg.get("ui.spellcheck", True):
+            return None
+        lang = self.cfg.get("ui.spell_language", "en")
+        cached = getattr(self, "_speller", None)
+        if cached is None or cached.language != lang:
+            try:
+                from .spelling import Speller
+
+                self._speller = Speller(lang)
+            except Exception as e:  # noqa: BLE001 - no dictionary: carry on without spell checking
+                self.log(f"spell check unavailable: {e!r}")
+                self.cfg["ui"]["spellcheck"] = False
+                return None
+            self._spell_names_key = None
+        names_key = (len(self.mc.contacts) if self.mc else 0, len(self.heard), id(self.win), len(self.win.speakers))
+        if names_key != getattr(self, "_spell_names_key", None):  # names on the mesh are never "misspelled"
+            names = {h.get("name", "") for h in self.heard.values()} | set(self.win.speakers)
+            names |= {c["adv_name"] for c in (self.mc.contacts.values() if self.mc else [])}
+            names |= {w.name for w in self.windows} | {self.my_name}
+            self._speller.set_names(names)
+            self._spell_names_key = names_key
+        return self._speller
+
+    def spell_marks(self, text: str, cursor: int) -> list[tuple[int, int]]:
+        sp = self.speller
+        if sp is None or not text.strip() or (text.startswith("/") and not text.startswith("//")) \
+                or self.win.kind not in ("channel", "query"):
+            return []
+        return [(a, b) for a, b, _ in sp.misspelled(text, cursor)]
+
+    def spell_style(self):
+        from rich.style import Style as RichStyle
+
+        return RichStyle(underline=True, color=RichStyle.parse(self.st["bad"]).color)
+
+    def word_at_cursor(self) -> tuple[int, int, str] | None:
+        """The misspelled word the cursor is in or just after, if any."""
+        sp = self.speller
+        inp = self.query_one("#input", PromptInput)
+        text, cur = inp.value, inp.cursor_position
+        if sp is None or not text or (text.startswith("/") and not text.startswith("//")):
+            return None
+        for a, b, w in sp.misspelled(text):
+            if a <= cur <= b + 1:
+                return a, b, w
+        return None
+
+    def action_spell_fix(self, i: int) -> None:
+        hit = self.word_at_cursor()
+        sugg = getattr(self, "_spell_sugg", [])
+        if not hit or not (0 <= i < len(sugg)):
+            return
+        a, b, _ = hit
+        inp = self.query_one("#input", PromptInput)
+        text = inp.value
+        inp.value = text[:a] + sugg[i] + text[b:]
+        inp.cursor_position = a + len(sugg[i])
+        inp.focus()
+
+    def action_spell_learn(self) -> None:
+        hit = self.word_at_cursor()
+        if hit and self.speller:
+            self.speller.learn(hit[2])
+            self.query_one("#input", PromptInput)._build_highlight_map()
+            self.query_one("#input", PromptInput).refresh()
+            self.refresh_hints()
+
+    def spell_hint(self):
+        hit = self.word_at_cursor()
+        if not hit:
+            return None
+        sugg = self.speller.suggestions(hit[2])
+        self._spell_sugg = sugg
+        t = self.st
+        out = easy.ClickText(no_wrap=True, overflow="ellipsis")
+        out.append(hit[2], self.spell_style())
+        out.append("  →  ", t["dim"])
+        if not sugg:
+            out.append("no suggestions", t["dim"])
+        for i, w in enumerate(sugg):
+            if i:
+                out.append("  ", t["dim"])
+            out.append(w, "bold", f"spell_fix({i})")
+        out.append("     ", t["dim"])
+        out.append("add to dictionary", t["dim"], "spell_learn")
+        out.append("   Tab cycles", t["meta"])
+        return out
+
     def refresh_hints(self) -> None:
         hints = self.query_one("#hints", easy.ClickStatic)
         text = easy.hint_for(self, self.query_one("#input", PromptInput).value) if self.cfg.get("ui.hints", True) else None
+        if text is None:
+            text = self.spell_hint()
         hints.display = text is not None
         if text is not None:
             hints.show(text)

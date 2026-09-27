@@ -9,6 +9,7 @@ dependencies = [
     "meshcore>=2.3",
     "textual>=0.80",
     "segno>=1.6",
+    "pyspellchecker>=0.8",
 ]
 
 [project.optional-dependencies]

@@ -20,6 +20,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "ui": {
         "theme": "irssi",
         "layout": "classic",  # classic (irssi) or easy (window list, toolbar, key hints)
+        "spellcheck": True,  # underline misspelled words in messages you're typing
+        "spell_language": "en",  # en es fr pt de it ru ar lv eu nl fa
         "hints": True,  # show matching commands and arguments above the input while typing /
         "timestamp_format": "%H:%M",
         "nicklist": True,
