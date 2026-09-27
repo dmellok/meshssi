@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1
 
 ### Fixed: limits on automatic airtime
 An airtime review of everything meshssi transmits without you typing a command:
