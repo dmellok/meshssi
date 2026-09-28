@@ -170,3 +170,40 @@ def test_mvt_decode_and_basemap_drawing():
     assert any(any(row) for row in cv.bg)  # water filled
     assert any(any(row) for row in cv.dots)  # road drawn
     assert any(text == "Testville" for _, _, text, _ in cv.labels)
+
+
+def test_ble_failures_explain_pairing_and_macos_never_sends_a_pin(monkeypatch, tmp_path):
+    import asyncio
+    import sys
+
+    from meshcore import MeshCore
+
+    from meshssi.app import MeshssiApp
+
+    calls = []
+
+    async def fake_create_ble(address, pin=None, **kw):
+        calls.append((address, pin))
+        if address == "AA:AA:AA:AA:AA:01":
+            raise Exception("[org.bluez.Error.NotPermitted] Insufficient Authentication")
+        return None  # not found / timed out
+
+    monkeypatch.setattr(MeshCore, "create_ble", staticmethod(fake_create_ble))
+
+    async def run(target, platform):
+        monkeypatch.setattr(sys, "platform", platform)
+        app = MeshssiApp(target, config=Config(tmp_path / f"{platform}.toml"))
+        app.cfg["connection"]["ble_pin"] = "123456"
+        async with app.run_test() as pilot:
+            await pilot.pause(0.5)
+            text = "\n".join(r.get("text", "") for r in app.windows[0].recs)
+            await app.action_quit()
+        return text
+
+    linux_auth = asyncio.run(run("ble:AA:AA:AA:AA:AA:01", "linux"))
+    assert "isn't paired" in linux_auth and "bluetoothctl" in linux_auth and "pair AA:AA:AA:AA:AA:01" in linux_auth
+    assert calls[-1] == ("AA:AA:AA:AA:AA:01", "123456")
+    mac_missing = asyncio.run(run("ble:AA:AA:AA:AA:AA:02", "darwin"))
+    assert calls[-1] == ("AA:AA:AA:AA:AA:02", None)  # macOS can't pair() explicitly: never pass the PIN
+    assert "wasn't found" in mac_missing and "System Settings" in mac_missing
+    assert "Is another app connected" not in linux_auth + mac_missing

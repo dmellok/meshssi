@@ -17,7 +17,10 @@ def scan_ble() -> None:
         for d, adv in sorted(hits, key=lambda h: -h[1].rssi):
             print(f"  {d.name:<28} ble:{d.address}   rssi {adv.rssi} dBm")
         if hits:
-            print("\nConnect with: meshssi ble:<address>   (set a PIN with /set connection.ble_pin 123456)")
+            from .util import ble_pairing_help
+
+            print("\nConnect with: meshssi ble:<address>")
+            print("MeshCore radios need pairing first. " + ble_pairing_help(sorted(hits, key=lambda h: -h[1].rssi)[0][0].address))
 
     asyncio.run(run())
 

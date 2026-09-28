@@ -316,6 +316,7 @@ def setup(api):
 
 - **"The radio keeps dropping us"**: another client is connected to the WiFi companion. Close it, or use [daemon mode](#daemon-mode-share-the-radio).
 - **`No module named 'meshssi'` from `.venv/bin/meshssi` on macOS**: iCloud-synced folders like `~/Documents` can set the hidden flag on the venv's `.pth` file, and Python 3.13+ skips hidden `.pth` files. Use `./meshssi.sh`, or run `chflags -R nohidden .venv`.
+- **Bluetooth won't connect**: MeshCore radios must be paired first. On Linux, pair once with `bluetoothctl` (`scan on`, `pair <address>`, enter the PIN from the radio's screen or 123456, `trust <address>`), then run `meshssi ble:<address>`. On macOS a system dialog asks for the PIN the first time you connect; if it never appears, remove the radio in System Settings → Bluetooth and try again.
 - **Nothing in `/rf`**: the packet monitor shows what the radio reports. On a quiet mesh that can be a few packets a minute.
 - `--debug` writes a protocol log to `meshssi-debug.log`.
 

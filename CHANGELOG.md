@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Bluetooth connections** ([#1](https://github.com/dmellok/meshssi/issues/1)):
+  - MeshCore radios need to be paired before they'll talk. `meshssi --scan` now says how to pair on your platform: `bluetoothctl` on Linux, the system dialog on macOS.
+  - The old "set a PIN with /set connection.ble_pin" hint is gone: meshssi can't enter a PIN itself, and on macOS setting one made every connection fail. It's now ignored on macOS.
+  - Bluetooth failures now say what went wrong (not paired, not found or not answering) with the fix, instead of the misleading "Is another app connected?".
+
 ## 0.4.2
 
 ### New

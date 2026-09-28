@@ -15,7 +15,7 @@ PLUGIN_DIR = CONFIG_DIR / "plugins"
 DEFAULTS: dict[str, dict[str, Any]] = {
     "connection": {
         "target": "",  # host[:port], /dev/tty..., or ble:<address>
-        "ble_pin": "",
+        "ble_pin": "",  # Linux/Windows only: set to have meshssi ask the OS to pair (the OS's agent enters the PIN)
     },
     "ui": {
         "theme": "irssi",

@@ -1076,9 +1076,15 @@ class MeshssiApp(CommandsMixin, App):
     # ── connection & device events ────────────────────────────────────────
     async def open_radio(self) -> MeshCore | None:
         if self.target.startswith("ble"):
+            import sys
+
             address = self.target.partition(":")[2] or None
-            return await MeshCore.create_ble(address, pin=self.cfg.get("connection.ble_pin") or None,
-                                             auto_reconnect=True, max_reconnect_attempts=1000)
+            # A PIN only makes meshcore call pair(), which macOS doesn't support (it pairs by itself, with a
+            # system dialog) and which on Linux needs the OS's pairing agent. So only Linux/Windows use it.
+            pin = self.cfg.get("connection.ble_pin") or None
+            if sys.platform == "darwin":
+                pin = None
+            return await MeshCore.create_ble(address, pin=pin, auto_reconnect=True, max_reconnect_attempts=1000)
         if self.target.startswith("/dev/") or self.target.upper().startswith("COM"):
             return await MeshCore.create_serial(self.target, self.baud, auto_reconnect=True, max_reconnect_attempts=1000)
         host, _, port = self.target.partition(":")
@@ -1086,14 +1092,21 @@ class MeshssiApp(CommandsMixin, App):
 
     async def connect(self) -> None:
         self.status(f"Connecting to {self.target}…")
+        ble = self.target.startswith("ble")
         try:
             self.mc = await self.open_radio()
         except Exception as e:  # noqa: BLE001
             self.mc = None
-            self.status(f"Connection failed: {e}", "error")
+            self.status(f"Connection failed: {type(e).__name__}: {e}", "error")
+            if ble:
+                self.explain_ble_failure(str(e))
+            return
         if not self.mc:
-            self.status("No response from radio. Is another app connected to it? /reconnect to retry "
-                        "(or share the radio between apps with `meshssi --serve`).", "error")
+            if ble:
+                self.explain_ble_failure("")
+            else:
+                self.status("No response from radio. Is another app connected to it? /reconnect to retry "
+                            "(or share the radio between apps with `meshssi --serve`).", "error")
             return
         mc = self.mc
         mc.set_decrypt_channel_logs(True)
@@ -1119,6 +1132,21 @@ class MeshssiApp(CommandsMixin, App):
         except Exception:  # noqa: BLE001
             pass
         await self.on_connected()
+
+    def explain_ble_failure(self, error: str) -> None:
+        from .util import ble_pairing_help
+
+        address = self.target.partition(":")[2] or "<address>"
+        low = error.lower()
+        if any(k in low for k in ("notpermitted", "notauthorized", "authentication", "insufficient", "encrypt", "pair")):
+            self.status("The radio refused the connection because it isn't paired. " + ble_pairing_help(address), "error")
+        elif any(k in low for k in ("not found", "notfound", "was not found", "no device")) or not error:
+            self.status(f"Couldn't reach {address} over Bluetooth: it wasn't found, or didn't answer in time. Check it's on "
+                        "and in range, that no phone is connected to it, and run `meshssi --scan`. If it's never been "
+                        "paired with this computer: " + ble_pairing_help(address), "error")
+        else:
+            self.status("Bluetooth connection failed. If the radio has never been paired with this computer: "
+                        + ble_pairing_help(address) + "  Run with --debug for a detailed log.", "error")
 
     async def on_connected(self) -> None:
         mc = self.mc

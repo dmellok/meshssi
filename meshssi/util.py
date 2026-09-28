@@ -185,3 +185,20 @@ def write_private(path, text: str) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
+
+
+def ble_pairing_help(address: str = "<address>") -> str:
+    """How to pair a MeshCore radio over Bluetooth on this platform. MeshCore companions require an
+    encrypted (paired) link; meshssi can't enter the PIN itself, the operating system has to."""
+    import sys
+
+    if sys.platform == "darwin":
+        return ("macOS pairs automatically: when you first connect, a system dialog asks for the PIN shown on "
+                "the radio's screen (or 123456 if it has none). If that dialog never appeared, remove the radio in "
+                "System Settings → Bluetooth and connect again.")
+    if sys.platform.startswith("linux"):
+        return ("On Linux, pair once with bluetoothctl, then connect without a PIN:\n"
+                f"    bluetoothctl\n    scan on          (wait until the radio is listed)\n"
+                f"    pair {address}  (enter the PIN from the radio's screen, or 123456)\n"
+                f"    trust {address}\n    quit")
+    return "Pair the radio in your system's Bluetooth settings first (PIN from its screen, or 123456), then connect."
