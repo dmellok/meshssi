@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2
 
 ### New
 - **Spell check** for messages you type. Offline, in 12 languages (`/spell lang de`, etc.).
