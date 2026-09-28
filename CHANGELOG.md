@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.3
 
 ### Fixed
 - **Bluetooth connections** ([#1](https://github.com/dmellok/meshssi/issues/1)):
