@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.4
+
+### Fixed
+- **A Bluetooth link that keeps dropping** ([#1](https://github.com/dmellok/meshssi/issues/1)) no longer retries silently. When the radio refuses the link (connect, drop, connect, drop…), meshssi used to retry every second for up to 17 minutes and show nothing. Now:
+  - The status window says "Lost the radio; reconnecting…" as soon as the link drops.
+  - After two refusals for lack of pairing, five other Bluetooth errors, or three drops within a minute, it stops and explains why.
+  - The explanation covers stale pairings (after a firmware update or reset the radio forgets the computer, but the computer keeps the old keys) and how to remove and re-pair. It also suggests what to try next (a phone app holding the radio, the computer's Bluetooth adapter).
+  - It no longer blames "another client" for Bluetooth drops.
+  - WiFi and serial radios still reconnect indefinitely.
+- The Linux pairing steps start with `bluetoothctl remove`, to clear a stale pairing first.
+
 ## 0.4.3
 
 ### Fixed

@@ -187,6 +187,20 @@ def write_private(path, text: str) -> None:
         f.write(text)
 
 
+BLE_AUTH_HINTS = ("notpermitted", "notauthorized", "authentication", "insufficient", "encrypt", "pair", "key missing")
+
+
+def is_ble_auth_error(error: str) -> bool:
+    """Whether a Bluetooth error means the radio refused us for lack of a (working) pairing."""
+    low = error.lower().replace(" ", "")
+    return any(k.replace(" ", "") in low for k in BLE_AUTH_HINTS)
+
+
+STALE_BOND = ("If it was paired before, the pairing may have gone stale: a firmware update or reset makes the radio "
+              "forget this computer while the computer keeps the old keys, and the radio then hangs up on every "
+              "connection. Remove it and pair again. ")
+
+
 def ble_pairing_help(address: str = "<address>") -> str:
     """How to pair a MeshCore radio over Bluetooth on this platform. MeshCore companions require an
     encrypted (paired) link; meshssi can't enter the PIN itself, the operating system has to."""
@@ -198,7 +212,20 @@ def ble_pairing_help(address: str = "<address>") -> str:
                 "System Settings → Bluetooth and connect again.")
     if sys.platform.startswith("linux"):
         return ("On Linux, pair once with bluetoothctl, then connect without a PIN:\n"
-                f"    bluetoothctl\n    scan on          (wait until the radio is listed)\n"
+                f"    bluetoothctl\n    remove {address}  (forget any old pairing; \"not available\" is fine)\n"
+                f"    scan on          (wait until the radio is listed)\n"
                 f"    pair {address}  (enter the PIN from the radio's screen, or 123456)\n"
                 f"    trust {address}\n    quit")
     return "Pair the radio in your system's Bluetooth settings first (PIN from its screen, or 123456), then connect."
+
+
+def ble_still_dropping(address: str = "<address>") -> str:
+    """What to try when a Bluetooth link keeps dropping even after pairing again."""
+    import sys
+
+    tips = ["Still dropping after pairing again? Close the MeshCore app on any phone paired with the radio"]
+    if sys.platform.startswith("linux"):
+        tips.append(f"check `bluetoothctl info {address}` says Paired: yes and Bonded: yes")
+        tips.append("try a USB Bluetooth adapter: some built-in ones (older Macs running Linux especially) are "
+                    "unreliable with Bluetooth LE")
+    return ", ".join(tips) + ". Run with --debug for a detailed log, and /reconnect to try again."

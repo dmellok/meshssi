@@ -207,3 +207,65 @@ def test_ble_failures_explain_pairing_and_macos_never_sends_a_pin(monkeypatch, t
     assert calls[-1] == ("AA:AA:AA:AA:AA:02", None)  # macOS can't pair() explicitly: never pass the PIN
     assert "wasn't found" in mac_missing and "System Settings" in mac_missing
     assert "Is another app connected" not in linux_auth + mac_missing
+
+
+def test_a_bluetooth_link_that_cant_come_back_stops_retrying_and_says_why(monkeypatch, tmp_path):
+    """meshcore retries a dropped link every second, silently, up to 1000 times. A radio that refuses us for
+    lack of a working pairing (issue #1: connect, drop, connect, drop…) must end that with an explanation;
+    a WiFi radio that's merely rebooting must keep being retried."""
+    import asyncio
+    import sys
+
+    from meshcore.connection_manager import ConnectionManager
+
+    from meshssi.app import MeshssiApp
+
+    class Refusing:  # a transport whose every reconnect attempt fails
+        def __init__(self, error):
+            self.error, self.attempts = error, 0
+
+        async def connect(self):
+            self.attempts += 1
+            raise Exception(self.error)
+
+        async def disconnect(self):
+            pass
+
+        def set_reader(self, reader):
+            pass
+
+    class FakeMC:
+        def __init__(self, transport):
+            self.connection_manager = ConnectionManager(transport, auto_reconnect=True, max_reconnect_attempts=1000)
+
+        async def disconnect(self):
+            await self.connection_manager.disconnect()
+
+    async def run(target, error, wait):
+        monkeypatch.setattr(sys, "platform", "linux")
+        app = MeshssiApp(target, config=Config(tmp_path / "c.toml"))
+        app.connect = lambda: asyncio.sleep(0)  # no real radio: we hand it the fake below
+        async with app.run_test() as pilot:
+            transport = Refusing(error)
+            app.mc = mc = FakeMC(transport)
+            app.connected = True
+            app.watch_link(mc)
+            mc.connection_manager._is_connected = True
+            await mc.connection_manager.handle_disconnect("ble_disconnect")  # the link drops
+            await pilot.pause(wait)
+            text = "\n".join(r.get("text", "") for r in app.windows[0].recs)
+            gave_up, attempts = app.mc is None, transport.attempts
+            await mc.disconnect()
+            await app.action_quit()
+        return text, gave_up, attempts
+
+    text, gave_up, attempts = asyncio.run(run("ble:AA:AA:AA:AA:AA:01",
+                                              "[org.bluez.Error.AuthenticationFailed] Authentication Failed", 3.5))
+    assert gave_up and attempts == 2  # two refusals, then it stops instead of hammering the radio
+    assert "Lost the radio; reconnecting" in text
+    assert "isn't paired" in text and "gone stale" in text
+    assert "remove AA:AA:AA:AA:AA:01" in text and "pair AA:AA:AA:AA:AA:01" in text
+    assert "another client" not in text
+
+    text, gave_up, attempts = asyncio.run(run("192.168.1.50", "ConnectionRefusedError", 3.5))
+    assert not gave_up and attempts >= 2 and "Lost the radio; reconnecting" in text and "pair" not in text

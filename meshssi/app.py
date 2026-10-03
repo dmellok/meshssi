@@ -25,7 +25,7 @@ from .notify import desktop_notify
 from .plugins import PluginManager
 from .store import Store
 from .themes import THEMES
-from .util import ago, clean, expand_shortcodes, linkify, name_forms, name_matches, pick_color, split_utf8
+from .util import ago, clean, expand_shortcodes, is_ble_auth_error, linkify, name_forms, name_matches, pick_color, split_utf8
 
 CONTACT_TYPES = {0: "?", 1: "chat", 2: "repeater", 3: "room", 4: "sensor"}
 TYPE_GLYPH = {1: "@", 2: "R", 3: "#", 4: "S"}
@@ -246,6 +246,7 @@ class MeshssiApp(CommandsMixin, App):
         self.pending_confirm: tuple[str, float] | None = None
         self.connected = False
         self.drops: list[float] = []  # recent disconnect times, to spot another client fighting for the radio
+        self.link_failures: list[tuple[float, str]] = []  # failed reconnect attempts since the link last worked
         # mesh awareness
         self.heard: dict[str, dict] = {}  # pubkey -> {name, type, lat, lon, last, snr, rssi, hops}
         self.rf: collections.deque = collections.deque(maxlen=3000)
@@ -1109,6 +1110,7 @@ class MeshssiApp(CommandsMixin, App):
                             "(or share the radio between apps with `meshssi --serve`).", "error")
             return
         mc = self.mc
+        self.watch_link(mc)
         mc.set_decrypt_channel_logs(True)
         for etype, handler in (
             (EventType.CONTACT_MSG_RECV, self.on_contact_msg),
@@ -1134,12 +1136,13 @@ class MeshssiApp(CommandsMixin, App):
         await self.on_connected()
 
     def explain_ble_failure(self, error: str) -> None:
-        from .util import ble_pairing_help
+        from .util import STALE_BOND, ble_pairing_help, is_ble_auth_error
 
         address = self.target.partition(":")[2] or "<address>"
         low = error.lower()
-        if any(k in low for k in ("notpermitted", "notauthorized", "authentication", "insufficient", "encrypt", "pair")):
-            self.status("The radio refused the connection because it isn't paired. " + ble_pairing_help(address), "error")
+        if is_ble_auth_error(error):
+            self.status("The radio refused the connection because it isn't paired with this computer. " + STALE_BOND
+                        + ble_pairing_help(address), "error")
         elif any(k in low for k in ("not found", "notfound", "was not found", "no device")) or not error:
             self.status(f"Couldn't reach {address} over Bluetooth: it wasn't found, or didn't answer in time. Check it's on "
                         "and in range, that no phone is connected to it, and run `meshssi --scan`. If it's never been "
@@ -1148,9 +1151,74 @@ class MeshssiApp(CommandsMixin, App):
             self.status("Bluetooth connection failed. If the radio has never been paired with this computer: "
                         + ble_pairing_help(address) + "  Run with --debug for a detailed log.", "error")
 
+    def watch_link(self, mc) -> None:
+        """meshcore retries a dropped link every second, swallows each failure, and only reports success. So we
+        watch the attempts: a Bluetooth link that can't come back (not paired, or a stale pairing that makes the
+        radio hang up straight away) gets an explanation instead of minutes of silent connect-and-drop."""
+        cx = getattr(getattr(mc, "connection_manager", None), "connection", None)
+        if cx is None or getattr(cx, "_meshssi_watched", False):
+            return
+        inner = cx.connect
+
+        async def connect():
+            try:
+                result = await inner()
+            except Exception as e:
+                self.on_link_failure(mc, f"{type(e).__name__}: {e}")
+                raise
+            if result is None:
+                self.on_link_failure(mc, "")
+            return result
+
+        cx.connect = connect
+        cx._meshssi_watched = True
+
+    def on_link_failure(self, mc, error: str) -> None:
+        if mc is not self.mc:
+            return
+        now = time.time()
+        self.link_failures = [(t, e) for t, e in self.link_failures if now - t < 120] + [(now, error)]
+        if self.connected:  # the first failed attempt after a drop
+            self.connected = False
+            self.status("Lost the radio; reconnecting…", "error")
+            self.refresh_chrome()
+        if not self.target.startswith("ble"):  # WiFi/serial radios that reboot or go away do come back: keep trying
+            return
+        errors = [e for _, e in self.link_failures if e]
+        if sum(map(is_ble_auth_error, errors)) >= 2 or len(errors) >= 5:  # not found/out of range isn't counted
+            self.give_up_link(mc, error or errors[-1])
+
+    def give_up_link(self, mc, error: str) -> None:
+        """Stop meshcore reconnecting, and say why the Bluetooth link keeps failing."""
+        from .util import STALE_BOND, ble_pairing_help, ble_still_dropping
+
+        cm = mc.connection_manager
+        cm.max_reconnect_attempts = 0  # ends meshcore's retry loop after the current attempt
+        self.connected = False
+        self.mc = None
+        self.link_failures = []
+        self.drops = []
+
+        async def close() -> None:
+            for step in (mc.disconnect, cm.connection.disconnect):
+                try:
+                    await asyncio.wait_for(step(), 5)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        self.run_worker(close())
+        address = self.target.partition(":")[2] or "<address>"
+        if is_ble_auth_error(error):
+            msg = "The radio keeps refusing the Bluetooth link because it isn't paired with this computer. "
+        else:
+            msg = "The Bluetooth link keeps dropping" + (f" ({error})" if error else "") + ". "
+        self.status(msg + STALE_BOND + ble_pairing_help(address) + "\n" + ble_still_dropping(address), "error")
+        self.refresh_chrome()
+
     async def on_connected(self) -> None:
         mc = self.mc
         self.connected = True
+        self.link_failures = []
         self.self_info = dict(mc.self_info)
         self.store = self.make_store(self.self_info["public_key"])
         async with self.io:
@@ -1551,6 +1619,9 @@ class MeshssiApp(CommandsMixin, App):
         now = time.time()
         self.drops = [t for t in self.drops if now - t < 60] + [now]
         if len(self.drops) >= 3:
+            if self.target.startswith("ble"):  # one Bluetooth client at a time: a stale pairing, not a rival app
+                self.give_up_link(self.mc, "")
+                return
             self.connected = False
             mc, self.mc = self.mc, None
             self.run_worker(mc.disconnect())
